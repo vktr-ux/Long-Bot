@@ -178,6 +178,12 @@ class SQLiteStore:
         )
         self.conn.commit()
 
+    def latest_snapshot_timestamp_ms(self) -> int | None:
+        row = self.conn.execute("SELECT MAX(timestamp_ms) AS latest_ms FROM market_snapshots").fetchone()
+        if not row or row["latest_ms"] is None:
+            return None
+        return int(row["latest_ms"])
+
     def upsert_candles(self, candles: list[Candle]) -> None:
         self.conn.executemany(
             """
@@ -255,4 +261,3 @@ class SQLiteStore:
         )
         self.conn.commit()
         return int(cur.lastrowid)
-

@@ -73,6 +73,16 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "target_atr_extension_mult": 2.0,
         "round_level_detection": True,
     },
+    "breakout_upgrade": {
+        "enabled": True,
+        "max_score_gap_below_watch": 5,
+        "min_volume_spike_15m": 1.8,
+        "min_rr": 1.5,
+        "max_chase_risk": "MEDIUM",
+        "allow_hot_rsi_with_warning": True,
+        "require_funding_not_overheated": True,
+        "require_oi_not_strongly_negative": True,
+    },
     "rsi": {
         "enabled": True,
         "period": 14,
@@ -99,6 +109,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "symbol_universe_refresh_minutes": 20,
         "resistance_cache_ttl_minutes": 15,
         "orderbook_check_only_for_score_above": 55,
+    },
+    "storage": {
+        "save_all_market_snapshots": True,
+        "all_market_snapshot_interval_seconds": 60,
     },
     "telegram": {"enabled": True, "parse_mode": "HTML"},
     "profiles": {

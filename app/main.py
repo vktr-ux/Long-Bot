@@ -7,6 +7,13 @@ import logging
 from app.config import load_config
 from app.exchanges.bybit import BybitPublicConnector, recompute_price_24h_pct
 from app.notifications.telegram import TelegramNotifier, format_signal
+from app.scanner.calibration import (
+    ReplayCaseResult,
+    case_passed,
+    format_calibration_report,
+    format_replay_cases_report,
+    load_replay_cases,
+)
 from app.scanner.diagnostics import (
     export_diagnostics_jsonl,
     print_diagnostic_report,
@@ -28,6 +35,18 @@ from app.utils.time import utc_iso_from_ms
 LOGGER = logging.getLogger(__name__)
 
 
+def snapshots_to_store(config: dict, store: SQLiteStore, result) -> list:
+    storage_cfg = config.get("storage") or {}
+    if not storage_cfg.get("save_all_market_snapshots", False):
+        return result.enriched_tickers
+    latest_saved = store.latest_snapshot_timestamp_ms()
+    latest_market = max((ticker.timestamp_ms for ticker in result.tickers), default=None)
+    interval_ms = int(storage_cfg.get("all_market_snapshot_interval_seconds", 60) * 1000)
+    if latest_saved is None or latest_market is None or latest_market - latest_saved >= interval_ms:
+        return result.tickers
+    return result.enriched_tickers
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Bybit public-data crypto long momentum scanner")
     parser.add_argument("--config", default="config.yaml", help="Path to config.yaml")
@@ -38,6 +57,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--explain", help="Explain one symbol in detail, e.g. OPNUSDT")
     parser.add_argument("--profile", choices=["conservative", "normal", "aggressive"], help="Threshold profile")
     parser.add_argument("--replay", action="store_true", help="Replay a symbol over a historical public-data window")
+    parser.add_argument("--replay-cases", action="store_true", help="Run configured historical replay casebook")
+    parser.add_argument("--calibrate", action="store_true", help="Run replay casebook and print calibration summary")
+    parser.add_argument("--cases", default="config/replay_cases.yaml", help="Path to replay casebook YAML")
     parser.add_argument("--symbol", help="Symbol for replay, e.g. OPNUSDT")
     parser.add_argument("--exchange", default="bybit", help="Exchange for replay; Bybit is supported")
     parser.add_argument("--start", help="Replay start, e.g. '2026-06-01 00:00'")
@@ -66,7 +88,7 @@ async def run_cycle(
         engine = ScanEngine(connector, config)
         result = await engine.scan_once(explain_symbol=explain_symbol)
         store.upsert_symbols(result.symbols)
-        store.insert_snapshots(result.enriched_tickers)
+        store.insert_snapshots(snapshots_to_store(config, store, result))
         export_path = export_diagnostics_jsonl(result)
         print(f"Top activity candidates ({len(result.enriched_tickers)} enriched):")
         for ticker in result.enriched_tickers[:15]:
@@ -230,6 +252,53 @@ async def run_replay_command(config: dict, args: argparse.Namespace) -> int:
     return 0
 
 
+async def run_replay_casebook_command(config: dict, args: argparse.Namespace, calibration: bool = False) -> int:
+    try:
+        cases = load_replay_cases(args.cases)
+    except Exception as exc:  # noqa: BLE001
+        print(f"Replay casebook load failed: {exc}")
+        return 2
+    bybit_cfg = config["exchanges"]["bybit"]
+    connector = BybitPublicConnector(
+        base_url=bybit_cfg["base_url"],
+        category=bybit_cfg["category"],
+        max_concurrent_requests=config["performance"]["max_concurrent_requests"],
+    )
+    results: list[ReplayCaseResult] = []
+    try:
+        for case in cases:
+            if case.exchange != "bybit":
+                results.append(ReplayCaseResult(case=case, error="only Bybit public replay is supported"))
+                continue
+            try:
+                candles_by_interval, oi_history, funding_history, notes = await load_public_replay_data(
+                    connector, case.symbol, case.start_ms, case.end_ms
+                )
+                report = run_replay_on_candles(
+                    symbol=case.symbol,
+                    exchange=case.exchange,
+                    start_ms=case.start_ms,
+                    end_ms=case.end_ms,
+                    candles_by_interval=candles_by_interval,
+                    oi_history=oi_history,
+                    funding_history=funding_history,
+                    config=config,
+                )
+                report.missing_data_notes.extend(notes)
+                results.append(ReplayCaseResult(case=case, report=report))
+            except Exception as exc:  # noqa: BLE001
+                results.append(ReplayCaseResult(case=case, error=str(exc)))
+    finally:
+        await connector.close()
+    if calibration:
+        print(format_calibration_report(results, config["app"]["profile"], config["scoring"]["levels"]["watch"]))
+    else:
+        print(format_replay_cases_report(results))
+    if any(result.error is not None for result in results):
+        return 2
+    return 0 if all(case_passed(result) for result in results) else 1
+
+
 async def async_main() -> int:
     args = parse_args()
     config = load_config(args.config)
@@ -246,6 +315,10 @@ async def async_main() -> int:
         return 0
     if args.replay:
         return await run_replay_command(config, args)
+    if args.replay_cases:
+        return await run_replay_casebook_command(config, args)
+    if args.calibrate:
+        return await run_replay_casebook_command(config, args, calibration=True)
     if args.sanity_check:
         return await run_sanity_check(config, args.symbols)
     store = SQLiteStore(config["app"]["database_path"])

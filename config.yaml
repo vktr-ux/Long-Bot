@@ -64,6 +64,16 @@ setup_quality:
   target_atr_extension_mult: 2.0
   round_level_detection: true
 
+breakout_upgrade:
+  enabled: true
+  max_score_gap_below_watch: 5
+  min_volume_spike_15m: 1.8
+  min_rr: 1.5
+  max_chase_risk: MEDIUM
+  allow_hot_rsi_with_warning: true
+  require_funding_not_overheated: true
+  require_oi_not_strongly_negative: true
+
 rsi:
   enabled: true
   period: 14
@@ -105,6 +115,10 @@ performance:
   symbol_universe_refresh_minutes: 20
   resistance_cache_ttl_minutes: 15
   orderbook_check_only_for_score_above: 55
+
+storage:
+  save_all_market_snapshots: true
+  all_market_snapshot_interval_seconds: 60
 
 telegram:
   enabled: true

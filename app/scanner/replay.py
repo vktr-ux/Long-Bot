@@ -127,6 +127,7 @@ def build_replay_step(
     total, level, sig_type, scores, risk, reasons, warnings, grade, label = score_signal(
         ticker, metrics, breakout, setup, chart_tuple, rsi_tuple, config
     )
+    warnings.append("historical activity rank unavailable in replay")
     rejection_reasons: list[str] = []
     if not oi:
         warnings.append("replay OI unavailable - derivatives score reduced")
@@ -194,7 +195,7 @@ def run_replay_on_candles(
     if first_signal and first_breakout_time:
         if first_signal.timestamp_ms < first_breakout_time:
             phase = "before_breakout"
-        elif first_signal.timestamp_ms == first_breakout_time:
+        elif first_signal.state in {"FRESH_BREAKOUT", "CONFIRMED_BREAKOUT", "RETEST_HELD"}:
             phase = "during_breakout"
         else:
             phase = "after_breakout"

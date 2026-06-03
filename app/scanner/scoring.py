@@ -5,6 +5,13 @@ from app.scanner.derivatives import derivatives_score
 from app.storage.models import BreakoutContext, Metrics, SetupPlan, TickerSnapshot
 from app.utils.numbers import clamp
 
+CHASE_RISK_ORDER = {"LOW": 0, "MEDIUM": 1, "HIGH": 2, "UNKNOWN": 3}
+
+
+def _append_unique(items: list[str], value: str) -> None:
+    if value not in items:
+        items.append(value)
+
 
 def momentum_score(metrics: Metrics) -> tuple[int, list[str]]:
     score = 0
@@ -101,8 +108,95 @@ def classify_level(score: int, breakout: BreakoutContext | None, scores: dict[st
     return "WATCH"
 
 
+def _funding_allows_breakout_upgrade(metrics: Metrics, config: dict) -> bool:
+    funding_rate = metrics.funding_rate
+    if funding_rate is None:
+        return False
+    return funding_rate <= config["funding"]["caution_min"]
+
+
+def _oi_allows_breakout_upgrade(metrics: Metrics) -> bool:
+    if metrics.oi_change_15m_pct is None and metrics.oi_change_1h_pct is None:
+        return False
+    return (metrics.oi_change_15m_pct or 0) > -3 and (metrics.oi_change_1h_pct or 0) > -8
+
+
+def _momentum_allows_breakout_upgrade(metrics: Metrics, config: dict) -> bool:
+    min_1h = config["filters"].get("min_price_change_1h_pct_for_candidate", 3.0)
+    one_hour_ok = metrics.price_change_1h is not None and metrics.price_change_1h >= min_1h
+    four_hour_ok = metrics.price_change_4h is not None and metrics.price_change_4h >= max(min_1h, 6.0)
+    return one_hour_ok or four_hour_ok
+
+
+def _rsi_allows_breakout_upgrade(metrics: Metrics, config: dict, upgrade_config: dict) -> bool:
+    if upgrade_config.get("allow_hot_rsi_with_warning", True):
+        extreme = max(
+            value
+            for value in [
+                metrics.rsi_15m if metrics.rsi_15m is not None else 0,
+                metrics.rsi_1h if metrics.rsi_1h is not None else 0,
+                metrics.rsi_4h if metrics.rsi_4h is not None else 0,
+            ]
+        )
+        return extreme < max(config["rsi"].get("danger_15m", 85), 95)
+    return not any(
+        value is not None and value >= config["rsi"].get("warning_15m", 80)
+        for value in [metrics.rsi_15m, metrics.rsi_1h, metrics.rsi_4h]
+    )
+
+
+def maybe_upgrade_breakout_watch(
+    score: int,
+    level: str,
+    metrics: Metrics,
+    breakout: BreakoutContext | None,
+    setup: SetupPlan | None,
+    config: dict,
+    reasons: list[str],
+    warnings: list[str],
+) -> str:
+    upgrade_config = config.get("breakout_upgrade") or {}
+    if not upgrade_config.get("enabled", False) or level != "NO_SIGNAL":
+        return level
+    watch_threshold = config["scoring"]["levels"]["watch"]
+    max_gap = upgrade_config.get("max_score_gap_below_watch", 0)
+    if score < watch_threshold - max_gap or score >= watch_threshold:
+        return level
+    if not breakout or breakout.state not in {"FRESH_BREAKOUT", "CONFIRMED_BREAKOUT"}:
+        return level
+    if (metrics.volume_spike_15m or 0) < upgrade_config.get("min_volume_spike_15m", 1.8):
+        return level
+    if not _momentum_allows_breakout_upgrade(metrics, config):
+        return level
+    if upgrade_config.get("require_funding_not_overheated", True) and not _funding_allows_breakout_upgrade(metrics, config):
+        return level
+    if upgrade_config.get("require_oi_not_strongly_negative", True) and not _oi_allows_breakout_upgrade(metrics):
+        return level
+    if not setup or setup.estimated_rr is None or setup.estimated_rr < upgrade_config.get("min_rr", 1.5):
+        return level
+    max_chase = upgrade_config.get("max_chase_risk", "MEDIUM")
+    if CHASE_RISK_ORDER.get(setup.chase_risk, 3) > CHASE_RISK_ORDER.get(str(max_chase), 1):
+        return level
+    if not _rsi_allows_breakout_upgrade(metrics, config, upgrade_config):
+        return level
+
+    if breakout.state == "FRESH_BREAKOUT":
+        _append_unique(reasons, "fresh 4H breakout")
+    else:
+        _append_unique(reasons, "confirmed 4H breakout")
+    _append_unique(reasons, "volume confirmed breakout")
+    _append_unique(reasons, "room-to-run exists")
+    _append_unique(reasons, "R/R acceptable")
+    _append_unique(reasons, "funding not overheated")
+    _append_unique(reasons, "upgraded to WATCH by breakout rule")
+    _append_unique(warnings, "score below regular WATCH threshold, upgraded by breakout rule")
+    return "WATCH"
+
+
 def signal_type_for(level: str, breakout: BreakoutContext | None) -> str:
     state = breakout.state if breakout else "NO_BREAKOUT"
+    if state in {"FRESH_BREAKOUT", "CONFIRMED_BREAKOUT"} and level == "WATCH":
+        return "BREAKOUT_WATCH"
     if state in {"FRESH_BREAKOUT", "CONFIRMED_BREAKOUT"} and level in {"BREAKOUT_HOT", "VERY_HOT"}:
         return "BREAKOUT_HOT"
     if state in {"APPROACHING_RESISTANCE", "TESTING_RESISTANCE"}:
@@ -167,7 +261,7 @@ def score_signal(
     risk = der_penalty + chart_penalty + setup_penalty + base_risk + rsi_penalty
     total = int(clamp(activity + momentum + derivatives + chart + setup_bonus - risk, 0, 100))
     level = classify_level(total, breakout, scores, warnings, config["scoring"])
+    level = maybe_upgrade_breakout_watch(total, level, metrics, breakout, setup, config, reasons, warnings)
     sig_type = signal_type_for(level, breakout)
     grade, label = grade_and_label(level, scores, breakout, warnings, setup)
     return total, level, sig_type, scores, risk, reasons, warnings, grade, label
-

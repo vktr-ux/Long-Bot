@@ -84,6 +84,18 @@ python -m app.main --once --dry-run --diagnostic --profile aggressive
 
 `normal` is the default. `aggressive` is intended for diagnostics and calibration visibility, not production Telegram alerts.
 
+Run the historical replay casebook:
+
+```bash
+python -m app.main --replay-cases --profile normal
+```
+
+Run calibration against a casebook:
+
+```bash
+python -m app.main --calibrate --cases config/replay_cases.yaml
+```
+
 Compare profiles:
 
 ```bash
@@ -122,6 +134,8 @@ The score combines:
 - Risk penalties: hot funding, hostile BTC background, wide spread, overextension, RSI danger, failed breakout.
 
 Higher levels require multiple independent confirmations. A single price pump should not become `HOT`.
+
+The normal profile also has a configurable breakout upgrade rule. It can upgrade a strong fresh or confirmed 4H breakout from near-WATCH to `WATCH` when volume, momentum, funding, OI, room-to-run, R/R, and chase-risk checks are acceptable. The numeric score is preserved, and the alert/replay output adds explicit reasons and warnings for the upgrade.
 
 ## Breakout Detection
 
@@ -165,6 +179,13 @@ Replay simulates scanner decisions candle-by-candle using public Bybit historica
 
 ```bash
 python -m app.main --replay --symbol OPNUSDT --exchange bybit --start "2026-06-01 00:00" --end "2026-06-04 03:00" --profile normal
+```
+
+Replay casebooks are YAML files under `config/`, starting with:
+
+```bash
+python -m app.main --replay-cases --profile normal
+python -m app.main --calibrate --cases config/replay_cases.yaml --profile normal
 ```
 
 Replay output includes first signal time/level/price, breakout zone, score, reasons, warnings, max favorable price after signal, max drawdown, target reference hit, and invalidation reference hit.
