@@ -1,0 +1,7 @@
+OPNUSDT:
+  sectors:
+    - prediction_markets
+  tags:
+    - bybit_perp
+    - example_manual_tag
+

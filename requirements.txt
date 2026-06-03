@@ -1,0 +1,6 @@
+httpx
+python-dotenv
+PyYAML
+pytest
+pytest-asyncio
+

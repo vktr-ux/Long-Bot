@@ -1,0 +1,33 @@
+# Local secrets and environment
+.env
+.env.*
+!.env.example
+
+# Python runtime/cache
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Scanner runtime data
+data/*
+!data/.gitkeep
+
+# Logs and local diagnostics
+*.log
+logs/
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
