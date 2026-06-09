@@ -33,6 +33,14 @@ from app.utils.logging import configure_logging
 from app.utils.time import utc_iso_from_ms
 
 LOGGER = logging.getLogger(__name__)
+TELEGRAM_TEST_MESSAGE = "Long-Bot Telegram test OK. Scanner is connected."
+
+
+def telegram_enabled(config: dict) -> bool:
+    notifications = config.get("notifications") or {}
+    if "telegram_enabled" in notifications:
+        return bool(notifications["telegram_enabled"])
+    return bool(config.get("telegram", {}).get("enabled", True))
 
 
 def snapshots_to_store(config: dict, store: SQLiteStore, result) -> list:
@@ -67,6 +75,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sanity-check", action="store_true", help="Run Bybit public-data parser sanity checks")
     parser.add_argument("--symbols", default="BTCUSDT,ETHUSDT,OPNUSDT", help="Comma-separated symbols for sanity check")
     parser.add_argument("--report-outcomes", action="store_true", help="Phase 4.5 placeholder outcome report")
+    parser.add_argument("--telegram-test", action="store_true", help="Send one Telegram test message and exit")
     return parser.parse_args()
 
 
@@ -120,13 +129,20 @@ async def run_cycle(
         )
         for signal in result.signals:
             previous = store.get_state(signal.exchange, signal.symbol)
-            allowed, reason = should_alert(signal, previous, config["cooldown"])
+            recent_alerts = store.sent_signal_timestamps_since(signal.timestamp_ms - 60 * 60_000)
+            allowed, reason = should_alert(signal, previous, config.get("notifications", config["cooldown"]), recent_alerts)
             if not allowed:
-                print(f"  skip {signal.symbol} {signal.level}: {reason}")
-                store.upsert_state(signal, sent=False)
+                LOGGER.info(
+                    "alert suppressed symbol=%s level=%s score=%s reason=%s",
+                    signal.symbol,
+                    signal.level,
+                    signal.score,
+                    reason,
+                )
+                print(f"  skip {signal.symbol} {signal.level} score={signal.score} reason={reason}")
                 continue
             sent = False
-            if dry_run or not config["telegram"]["enabled"]:
+            if dry_run or not telegram_enabled(config):
                 print("\n" + "=" * 72)
                 print(format_signal(signal))
                 print("=" * 72)
@@ -145,6 +161,28 @@ async def run_cycle(
 
 def print_outcome_report_placeholder() -> None:
     print("Outcome tracking schema is installed. Detailed --report-outcomes aggregation is Phase 4.5 TODO.")
+
+
+async def run_telegram_test(config: dict) -> int:
+    token = config["telegram"].get("bot_token", "")
+    chat_id = config["telegram"].get("chat_id", "")
+    missing = []
+    if not token:
+        missing.append("TELEGRAM_BOT_TOKEN")
+    if not chat_id:
+        missing.append("TELEGRAM_CHAT_ID")
+    if missing:
+        print(f"Telegram test failed: missing {', '.join(missing)} in local .env")
+        return 2
+    notifier = TelegramNotifier(token, chat_id, config["telegram"].get("parse_mode", "HTML"))
+    try:
+        await notifier.send_text(TELEGRAM_TEST_MESSAGE)
+    except Exception as exc:  # noqa: BLE001
+        detail = str(exc) or exc.__class__.__name__
+        print(f"Telegram test failed: {detail}")
+        return 2
+    print("Telegram test message sent.")
+    return 0
 
 
 async def run_sanity_check(config: dict, symbols_arg: str) -> int:
@@ -310,6 +348,8 @@ async def async_main() -> int:
         config["app"]["dry_run"] = True
     dry_run = bool(config["app"].get("dry_run"))
     configure_logging(config["app"]["log_level"])
+    if args.telegram_test:
+        return await run_telegram_test(config)
     if args.report_outcomes:
         print_outcome_report_placeholder()
         return 0

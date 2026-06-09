@@ -103,6 +103,29 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "reset_after_minutes": 90,
         "allow_immediate_state_transition_alert": True,
     },
+    "notifications": {
+        "telegram_enabled": True,
+        "min_level_to_send": "WATCH",
+        "per_symbol_cooldown_minutes": {
+            "WATCH": 90,
+            "HOT": 45,
+            "BREAKOUT_HOT": 30,
+            "VERY_HOT": 15,
+        },
+        "repeat_rules": {
+            "allow_if_level_upgraded": True,
+            "allow_if_score_increased_by": 10,
+            "allow_if_breakout_state_changed": True,
+            "allow_if_price_moved_pct_since_last_alert": 5.0,
+            "allow_if_new_target_or_invalidation": True,
+        },
+        "global_rate_limit": {
+            "max_alerts_per_hour": 8,
+            "max_alerts_per_10_minutes": 3,
+        },
+        "heartbeat": {"enabled": True, "interval_minutes": 360},
+        "digest": {"enabled": False, "interval_minutes": 60},
+    },
     "performance": {
         "max_enriched_candidates_per_cycle": 40,
         "max_concurrent_requests": 10,

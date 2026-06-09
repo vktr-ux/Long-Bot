@@ -64,6 +64,13 @@ Run Bybit parser/data sanity checks:
 python -m app.main --sanity-check --symbols BTCUSDT,ETHUSDT,OPNUSDT
 ```
 
+Send one Telegram connectivity test message:
+
+```bash
+python -m app.main --telegram-test
+python -m app.main --telegram-test --config config.vps.yaml
+```
+
 Continuous dry-run:
 
 ```bash
@@ -196,6 +203,63 @@ Historical OI/funding are used only when public Bybit endpoints return them for 
 
 If `python -m app.main --once --dry-run` fails due to network or Bybit access, tests still validate the parser and scanner logic with mocked responses. Use a VPS or network where `https://api.bybit.com` is reachable.
 
+## VPS Deploy
+
+Clone the repo and install dependencies:
+
+```bash
+git clone https://github.com/vktr-ux/Long-Bot.git /opt/Long-Bot
+cd /opt/Long-Bot
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+```
+
+Fill `.env` locally with:
+
+```env
+TELEGRAM_BOT_TOKEN=
+TELEGRAM_CHAT_ID=
+```
+
+Run Telegram and scanner checks:
+
+```bash
+python -m app.main --telegram-test --config config.vps.yaml
+python -m app.main --once --dry-run --config config.vps.yaml
+```
+
+Install the systemd service:
+
+```bash
+sudo cp deploy/long-bot.service.example /etc/systemd/system/long-bot.service
+sudo systemctl daemon-reload
+sudo systemctl enable long-bot
+sudo systemctl start long-bot
+sudo systemctl status long-bot
+```
+
+Operational commands:
+
+```bash
+sudo systemctl stop long-bot
+sudo systemctl restart long-bot
+sudo systemctl status long-bot
+journalctl -u long-bot -f
+```
+
 ## Outcome Tracking
 
 The SQLite schema includes `signal_outcomes`, and `app.scanner.outcomes` can compute MFE/MAE and threshold hit ordering. Full scheduled outcome aggregation/reporting is a Phase 4.5 TODO.
+
+## Paper Trading Roadmap
+
+The next research direction is documented in [PAPER_TRADING_ROADMAP.md](PAPER_TRADING_ROADMAP.md).
+
+Short version:
+
+- First build a local paper-trading simulator that records what would have happened without exchange private API keys or real orders.
+- Add a deterministic direction classifier for `LONG_CONTINUATION`, `SHORT_FAILED_BREAKOUT`, `LATE_CHASE`, and `NO_TRADE_VOLATILITY`.
+- Track virtual balance, PnL, MFE/MAE, drawdown, and weekly Excel reports.
+- Only after useful paper-trading results, consider a separate Bybit Demo Trading module, disabled by default and using demo-only keys from local `.env`.

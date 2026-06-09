@@ -90,13 +90,16 @@ class TelegramNotifier:
         self.parse_mode = parse_mode
 
     async def send(self, signal: SignalCandidate) -> bool:
+        return await self.send_text(format_signal(signal))
+
+    async def send_text(self, text: str) -> bool:
         if not self.bot_token or not self.chat_id:
             LOGGER.warning("Telegram token/chat id missing; alert not sent")
             return False
         url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
         payload = {
             "chat_id": self.chat_id,
-            "text": format_signal(signal),
+            "text": text,
             "parse_mode": self.parse_mode,
             "disable_web_page_preview": True,
         }
@@ -104,4 +107,3 @@ class TelegramNotifier:
             response = await client.post(url, json=payload)
             response.raise_for_status()
         return True
-

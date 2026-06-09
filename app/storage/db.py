@@ -6,6 +6,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
+from app.scanner.state import signal_notification_snapshot
 from app.storage.models import Candle, SignalCandidate, SymbolInfo, TickerSnapshot
 from app.utils.time import now_ms
 
@@ -211,7 +212,9 @@ class SQLiteStore:
         return details
 
     def upsert_state(self, signal: SignalCandidate, sent: bool) -> None:
+        snapshot = signal_notification_snapshot(signal, sent_at_ms=signal.timestamp_ms if sent else 0)
         details = {
+            **snapshot,
             "last_score": signal.score,
             "last_level": signal.level,
             "last_sent_ms": signal.timestamp_ms if sent else None,
@@ -230,6 +233,17 @@ class SQLiteStore:
             (signal.timestamp_ms, signal.exchange, signal.symbol, signal.state, signal.score, json.dumps(details)),
         )
         self.conn.commit()
+
+    def sent_signal_timestamps_since(self, cutoff_ms: int) -> list[int]:
+        rows = self.conn.execute(
+            """
+            SELECT timestamp_ms FROM signals
+            WHERE sent_to_telegram=1 AND timestamp_ms >= ?
+            ORDER BY timestamp_ms ASC
+            """,
+            (cutoff_ms,),
+        ).fetchall()
+        return [int(row["timestamp_ms"]) for row in rows]
 
     def insert_signal(self, signal: SignalCandidate, sent_to_telegram: bool) -> int:
         cur = self.conn.execute(

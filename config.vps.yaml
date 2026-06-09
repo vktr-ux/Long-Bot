@@ -1,0 +1,54 @@
+app:
+  scan_interval_seconds: 90
+  dry_run: false
+  log_level: INFO
+  database_path: data/scanner.sqlite3
+  profile: normal
+
+exchanges:
+  bybit:
+    enabled: true
+    base_url: "https://api.bybit.com"
+    category: "linear"
+  binance:
+    enabled: false
+    base_url: "https://fapi.binance.com"
+
+performance:
+  max_enriched_candidates_per_cycle: 100
+  max_concurrent_requests: 6
+  symbol_universe_refresh_minutes: 30
+  resistance_cache_ttl_minutes: 20
+  orderbook_check_only_for_score_above: 65
+
+storage:
+  save_all_market_snapshots: false
+  all_market_snapshot_interval_seconds: 60
+
+telegram:
+  enabled: true
+  parse_mode: HTML
+
+notifications:
+  telegram_enabled: true
+  min_level_to_send: WATCH
+  per_symbol_cooldown_minutes:
+    WATCH: 90
+    HOT: 45
+    BREAKOUT_HOT: 30
+    VERY_HOT: 15
+  repeat_rules:
+    allow_if_level_upgraded: true
+    allow_if_score_increased_by: 10
+    allow_if_breakout_state_changed: true
+    allow_if_price_moved_pct_since_last_alert: 5.0
+    allow_if_new_target_or_invalidation: true
+  global_rate_limit:
+    max_alerts_per_hour: 8
+    max_alerts_per_10_minutes: 3
+  heartbeat:
+    enabled: true
+    interval_minutes: 360
+  digest:
+    enabled: false
+    interval_minutes: 60

@@ -1,0 +1,17 @@
+[Unit]
+Description=Long-Bot crypto scanner
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/Long-Bot
+ExecStart=/opt/Long-Bot/.venv/bin/python -m app.main --config config.vps.yaml
+Restart=on-failure
+RestartSec=10
+Environment=PYTHONUNBUFFERED=1
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
