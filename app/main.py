@@ -144,10 +144,10 @@ async def run_cycle(
             sent = False
             if dry_run or not telegram_enabled(config):
                 print("\n" + "=" * 72)
-                print(format_signal(signal))
+                print(format_signal(signal, previous))
                 print("=" * 72)
             else:
-                sent = await notifier.send(signal)
+                sent = await notifier.send(signal, previous)
             store.insert_signal(signal, sent_to_telegram=sent)
             store.upsert_state(signal, sent=sent or dry_run)
             print(f"  alert {signal.symbol} {signal.level} score={signal.score} time={utc_iso_from_ms(signal.timestamp_ms)}")

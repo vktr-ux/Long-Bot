@@ -1,5 +1,5 @@
 app:
-  scan_interval_seconds: 90
+  scan_interval_seconds: 120
   dry_run: false
   log_level: INFO
   database_path: data/scanner.sqlite3
@@ -15,7 +15,7 @@ exchanges:
     base_url: "https://fapi.binance.com"
 
 performance:
-  max_enriched_candidates_per_cycle: 100
+  max_enriched_candidates_per_cycle: 250
   max_concurrent_requests: 6
   symbol_universe_refresh_minutes: 30
   resistance_cache_ttl_minutes: 20

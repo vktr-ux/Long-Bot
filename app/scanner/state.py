@@ -7,6 +7,7 @@ LEVEL_RANK = {"NO_SIGNAL": 0, "WATCH": 1, "HOT": 2, "BREAKOUT_HOT": 3, "VERY_HOT
 
 def signal_notification_snapshot(signal: SignalCandidate, sent_at_ms: int | None = None) -> dict:
     setup = signal.setup
+    metrics = signal.metrics
     price = None
     if signal.breakout:
         price = signal.breakout.current_price
@@ -20,6 +21,17 @@ def signal_notification_snapshot(signal: SignalCandidate, sent_at_ms: int | None
         "breakout_state": signal.state,
         "target_reference": setup.target_zone_low if setup else None,
         "invalidation_reference": setup.invalidation_price if setup else None,
+        "turnover_24h": metrics.turnover_24h,
+        "turnover_rank_24h": metrics.turnover_rank_24h,
+        "volume_spike_15m": metrics.volume_spike_15m,
+        "turnover_spike_15m": metrics.turnover_spike_15m,
+        "oi_change_15m_pct": metrics.oi_change_15m_pct,
+        "oi_change_1h_pct": metrics.oi_change_1h_pct,
+        "funding_rate": metrics.funding_rate,
+        "price_change_5m": metrics.price_change_5m,
+        "price_change_15m": metrics.price_change_15m,
+        "price_change_1h": metrics.price_change_1h,
+        "price_change_4h": metrics.price_change_4h,
         "sent_at_ms": sent_at_ms if sent_at_ms is not None else signal.timestamp_ms,
     }
 
