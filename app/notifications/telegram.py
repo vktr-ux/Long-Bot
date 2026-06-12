@@ -246,17 +246,14 @@ def format_signal(signal: SignalCandidate, previous_state: dict[str, Any] | None
     current_price = _signal_price(signal)
     lines: list[str] = [
         f"{level_emoji} <b>Long-Bot · {html.escape(signal.level)} ({html.escape(level_label)})</b>",
-        f"<code>{html.escape(signal.symbol)}</code> · Bybit Futures · <b>{signal.score}/100</b> · grade {html.escape(signal.grade)}",
-        f"<i>Не команда покупать. Открой график / проверь сетап вручную.</i>",
+        f"<code>{html.escape(signal.symbol)}</code> · Bybit Futures · <b>{signal.score}/100</b> · грейд {html.escape(signal.grade)}",
         "",
         f"💵 <b>Цена</b>: <code>{_fmt_price(current_price)}</code>",
-        (
-            f"5м {fmt_pct(metrics.price_change_5m)} · "
-            f"15м {fmt_pct(metrics.price_change_15m)} · "
-            f"1ч {fmt_pct(metrics.price_change_1h)} · "
-            f"4ч {fmt_pct(metrics.price_change_4h)}"
-        ),
-        f"24ч {fmt_pct(metrics.price_change_24h)}",
+        f"5м: {fmt_pct(metrics.price_change_5m)}",
+        f"15м: {fmt_pct(metrics.price_change_15m)}",
+        f"1ч: {fmt_pct(metrics.price_change_1h)}",
+        f"4ч: {fmt_pct(metrics.price_change_4h)}",
+        f"24ч: {fmt_pct(metrics.price_change_24h)}",
         "",
         "📊 <b>Активность</b>",
         (
@@ -266,8 +263,12 @@ def format_signal(signal: SignalCandidate, previous_state: dict[str, Any] | None
         f"Объем 15м: {_fmt_x(metrics.volume_spike_15m)} · всплеск оборота: {_fmt_x(metrics.turnover_spike_15m)}",
         "",
         "🧲 <b>Деривативы</b>",
-        f"OI 15м {fmt_pct(metrics.oi_change_15m_pct)} · OI 1ч {fmt_pct(metrics.oi_change_1h_pct)} · funding {_fmt_funding(metrics.funding_rate)}",
-        f"BTC фон: 15м {fmt_pct(metrics.btc_change_15m)} · 1ч {fmt_pct(metrics.btc_change_1h)} · 4ч {fmt_pct(metrics.btc_change_4h)}",
+        f"OI 15м: {fmt_pct(metrics.oi_change_15m_pct)}",
+        f"OI 1ч: {fmt_pct(metrics.oi_change_1h_pct)}",
+        f"Фандинг: {_fmt_funding(metrics.funding_rate)}",
+        f"BTC 15м: {fmt_pct(metrics.btc_change_15m)}",
+        f"BTC 1ч: {fmt_pct(metrics.btc_change_1h)}",
+        f"BTC 4ч: {fmt_pct(metrics.btc_change_4h)}",
     ]
     if breakout:
         lines.extend(["", "📈 <b>График 4H</b>"])
@@ -301,7 +302,7 @@ def format_signal(signal: SignalCandidate, previous_state: dict[str, Any] | None
                 (
                     f"Запас до цели {fmt_pct(setup.room_to_target_pct)} · "
                     f"R/R {_fmt_rr(setup.estimated_rr)} · "
-                    f"chase-risk {_label(CHASE_LABELS, setup.chase_risk)}"
+                    f"риск догонять {_label(CHASE_LABELS, setup.chase_risk)}"
                 ),
             ]
         )
@@ -321,7 +322,6 @@ def format_signal(signal: SignalCandidate, previous_state: dict[str, Any] | None
     if signal.warnings:
         lines.extend(["", "⚠️ <b>Риски</b>"])
         lines.extend(f"• {html.escape(_translate(warning))}" for warning in signal.warnings[:5])
-    lines.extend(["", "📌 <i>Действие: открыть график / проверить сетап. Это alert-сканер, не авто-сделка.</i>"])
     return "\n".join(lines)
 
 

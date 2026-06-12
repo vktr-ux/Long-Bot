@@ -65,10 +65,14 @@ def test_telegram_format_is_compact_russian_html():
     text = format_signal(make_signal())
 
     assert "<b>Long-Bot" in text
-    assert "Открой график / проверь сетап" in text
     assert "📊 <b>Активность</b>" in text
     assert "✅ <b>Почему сигнал</b>" in text
     assert "свежий 4H пробой" in text
+    assert "5м: +1.20%" in text
+    assert "15м: +2.80%" in text
+    assert "OI 15м: +1.70%" in text
+    assert "OI 1ч: +3.10%" in text
+    assert "Действие:" not in text
     assert "BUY signal" not in text
 
 
