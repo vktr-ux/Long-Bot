@@ -184,6 +184,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "max_leverage": 10,
         "default_leverage": 5,
         "max_loss_per_trade_usdt": 0.20,
+        "stop_loss_extra_buffer_pct": 0.35,
         "max_trades_per_hour": 0,
         "max_daily_loss_usdt": 1.00,
         "max_daily_trades": 0,

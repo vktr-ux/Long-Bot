@@ -32,6 +32,7 @@ def test_runtime_settings_defaults_match_paper_exploration_profile(tmp_path):
     assert settings.strategy.long_pullback_entry_enabled is False
     assert settings.strategy.short_breakdown_entry_enabled is False
     assert settings.entry.pullback_long_market_entry is False
+    assert settings.risk.stop_loss_extra_buffer_pct == 0.35
     assert settings.risk.stop_loss_symbol_cooldown_minutes == 90
     assert settings.risk.repeat_loss_symbol_count == 2
     assert settings.risk.cooldown_scope == "active_settings"
@@ -97,6 +98,7 @@ def test_runtime_settings_db_override_applies_to_config(tmp_path):
     assert effective["entry"]["pullback_long_market_entry"] is True
     assert effective["runtime_settings"]["version"] == 7
     assert effective["paper"]["max_daily_trades"] == 0
+    assert effective["paper"]["stop_loss_extra_buffer_pct"] == 0.35
     assert effective["performance"]["attention_scheduler_enabled"]
     assert effective["paper"]["stop_loss_symbol_cooldown_minutes"] == 90
     assert effective["paper"]["cooldown_scope"] == "all_history"

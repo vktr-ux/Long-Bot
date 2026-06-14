@@ -48,6 +48,36 @@ def test_risk_sizing_skips_when_symbol_min_notional_is_impossible():
     assert "minNotional" in plan.reason
 
 
+def test_risk_sizing_uses_stop_execution_buffer_without_inflating_profit_cost():
+    symbol = SymbolInfo("binance", "AAAUSDT", "AAA", "USDT", "TRADING", "PERPETUAL", step_size=0.1, min_notional=5)
+    paper_cfg = {
+        **PAPER_CFG,
+        "max_position_margin_usdt": 20,
+        "max_account_fraction_as_margin": 1,
+        "max_leverage": 20,
+        "default_leverage": 20,
+        "max_loss_per_trade_usdt": 0.14,
+        "initial_sl_pct_min": 0.65,
+        "initial_sl_pct_max": 0.65,
+        "stop_loss_extra_buffer_pct": 0.35,
+    }
+    plan = build_risk_plan(
+        balance_usdt=20,
+        entry_price=1,
+        score=70,
+        spread_pct=0.10,
+        atr_1m_pct=0.7,
+        symbol_info=symbol,
+        paper_cfg=paper_cfg,
+    )
+    assert plan.allowed
+    assert round(plan.cost_pct, 2) == 0.16
+    assert round(plan.stop_loss_extra_buffer_pct, 2) == 0.35
+    assert round(plan.loss_sizing_pct, 2) == 1.16
+    assert plan.max_notional_by_loss < 13
+    assert plan.notional_usdt * (plan.loss_sizing_pct / 100) <= paper_cfg["max_loss_per_trade_usdt"]
+
+
 def test_fee_slippage_net_pnl_exact_for_long_and_short():
     long_entry = simulate_fill(side="BUY", qty=1, reference_price=100, role="ENTRY", fee_rate=0.001, slippage_bps=10)
     long_exit = simulate_fill(side="SELL", qty=1, reference_price=102, role="EXIT", fee_rate=0.001, slippage_bps=10)

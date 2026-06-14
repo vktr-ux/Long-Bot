@@ -23,6 +23,8 @@ class RiskPlan:
     max_notional_by_loss: float
     min_notional: float
     step_size: float
+    stop_loss_extra_buffer_pct: float
+    loss_sizing_pct: float
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -55,6 +57,10 @@ def roundtrip_cost_fraction(paper_cfg: dict) -> float:
     return fee_rate * 2 + entry_slippage + exit_slippage
 
 
+def stop_loss_extra_buffer_fraction(paper_cfg: dict) -> float:
+    return max(0.0, float(paper_cfg.get("stop_loss_extra_buffer_pct", 0.35))) / 100
+
+
 def choose_leverage(spread_pct: float | None, score: int, initial_sl_pct_value: float, paper_cfg: dict) -> float:
     max_leverage = float(paper_cfg.get("max_leverage", 10))
     default_leverage = float(paper_cfg.get("default_leverage", 5))
@@ -82,8 +88,10 @@ def build_risk_plan(
 ) -> RiskPlan:
     sl_pct = initial_stop_pct(spread_pct, atr_1m_pct, paper_cfg)
     cost_fraction = roundtrip_cost_fraction(paper_cfg)
+    stop_buffer_fraction = stop_loss_extra_buffer_fraction(paper_cfg)
+    loss_sizing_fraction = sl_pct / 100 + cost_fraction + stop_buffer_fraction
     max_loss = float(paper_cfg.get("max_loss_per_trade_usdt", 0.20))
-    max_notional_by_loss = max_loss / (sl_pct / 100 + cost_fraction)
+    max_notional_by_loss = max_loss / loss_sizing_fraction
     leverage = choose_leverage(spread_pct, score, sl_pct, paper_cfg)
     desired_margin = min(
         float(paper_cfg.get("max_position_margin_usdt", 2.0)),
@@ -97,10 +105,10 @@ def build_risk_plan(
         or paper_cfg.get("fallback_step_size", 0.001)
     )
     if entry_price <= 0:
-        return RiskPlan(False, "entry price unavailable", balance_usdt, entry_price, 0, 0, 0, leverage, "assumed", sl_pct, cost_fraction * 100, max_notional_by_loss, min_notional, step_size)
+        return RiskPlan(False, "entry price unavailable", balance_usdt, entry_price, 0, 0, 0, leverage, "assumed", sl_pct, cost_fraction * 100, max_notional_by_loss, min_notional, step_size, stop_buffer_fraction * 100, loss_sizing_fraction * 100)
     qty = floor_to_step(raw_notional / entry_price, step_size)
     notional = qty * entry_price
     if notional < min_notional * 1.02:
-        return RiskPlan(False, "notional below exchange minNotional buffer", balance_usdt, entry_price, qty, notional, 0, leverage, "assumed", sl_pct, cost_fraction * 100, max_notional_by_loss, min_notional, step_size)
+        return RiskPlan(False, "notional below exchange minNotional buffer", balance_usdt, entry_price, qty, notional, 0, leverage, "assumed", sl_pct, cost_fraction * 100, max_notional_by_loss, min_notional, step_size, stop_buffer_fraction * 100, loss_sizing_fraction * 100)
     margin = notional / leverage if leverage else 0
-    return RiskPlan(True, None, balance_usdt, entry_price, qty, notional, margin, leverage, "assumed", sl_pct, cost_fraction * 100, max_notional_by_loss, min_notional, step_size)
+    return RiskPlan(True, None, balance_usdt, entry_price, qty, notional, margin, leverage, "assumed", sl_pct, cost_fraction * 100, max_notional_by_loss, min_notional, step_size, stop_buffer_fraction * 100, loss_sizing_fraction * 100)

@@ -292,6 +292,7 @@ const settingsHelp = [
   { group: "Риск", path: "risk.max_leverage", about: "Верхний предел плеча.", values: "1-125." },
   { group: "Риск", path: "risk.default_leverage", about: "Плечо по умолчанию для новых планов.", values: "1-125 и не выше max_leverage." },
   { group: "Риск", path: "risk.max_loss_per_trade_usdt", about: "Максимально допустимый расчетный убыток на одну сделку.", values: "Больше 0 USDT." },
+  { group: "Риск", path: "risk.stop_loss_extra_buffer_pct", about: "Дополнительный запас движения цены для расчета размера позиции на случай проскальзывания и пробоя стопа.", values: "0-10%. Больше = меньше размер позиции и ближе фактический убыток к max_loss_per_trade_usdt." },
   { group: "Риск", path: "risk.max_trades_per_hour", about: "Лимит новых сделок в час.", values: "0 = без лимита; иначе целое число." },
   { group: "Риск", path: "risk.max_daily_trades", about: "Лимит новых сделок за день.", values: "0 = без лимита; иначе целое число." },
   { group: "Риск", path: "risk.max_loss_streak", about: "Сколько убыточных закрытых сделок подряд допускается до остановки новых входов.", values: "0 = выключено; иначе целое число." },
