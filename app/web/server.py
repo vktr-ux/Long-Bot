@@ -104,6 +104,16 @@ def group_trades_by_exit_reason(trades: list[dict[str, Any]]) -> list[dict[str, 
     return sorted(grouped.values(), key=lambda row: float(row["net_pnl_usdt"]))
 
 
+def matches_active_settings(trade: dict[str, Any], active: dict[str, Any] | None) -> bool:
+    if not active:
+        return True
+    active_hash = str(active.get("settings_hash") or "")
+    if active_hash:
+        return str(trade.get("settings_hash") or "") == active_hash
+    active_version = str(active.get("version") or "")
+    return not active_version or str(trade.get("strategy_config_version") or "") == active_version
+
+
 def compact_trade_row(trade: dict[str, Any]) -> dict[str, Any]:
     keys = [
         "id",
@@ -262,9 +272,8 @@ def create_app(config_path: str = "config.paper.yaml") -> FastAPI:
         account = app.state.store.get_paper_account() or {}
         start_balance = float(account.get("start_balance_usdt") or config.get("paper", {}).get("starting_balance_usdt", 20.0))
         active = app.state.store.get_active_runtime_settings() or {}
-        active_hash = str(active.get("settings_hash") or "")
         all_trades = enrich_trade_rows(app.state.store, app.state.store.list_trades(from_ms=from_ms, to_ms=to_ms, limit=10_000))
-        trades = [trade for trade in all_trades if not active_hash or str(trade.get("settings_hash") or "") == active_hash]
+        trades = [trade for trade in all_trades if matches_active_settings(trade, active)]
         equity_from_ms = from_ms
         if equity_from_ms is None and active.get("created_at_ms"):
             equity_from_ms = int(active["created_at_ms"])
@@ -273,7 +282,7 @@ def create_app(config_path: str = "config.paper.yaml") -> FastAPI:
         now = int(datetime.now(tz=timezone.utc).timestamp() * 1000)
         day_start = now - 24 * 60 * 60 * 1000
         all_today_trades = enrich_trade_rows(app.state.store, app.state.store.list_trades(from_ms=day_start, limit=10_000))
-        today_trades = [trade for trade in all_today_trades if not active_hash or str(trade.get("settings_hash") or "") == active_hash]
+        today_trades = [trade for trade in all_today_trades if matches_active_settings(trade, active)]
         by_symbol: dict[str, float] = {}
         by_direction: dict[str, float] = {}
         by_settings: dict[str, dict[str, Any]] = {}
@@ -329,8 +338,9 @@ def create_app(config_path: str = "config.paper.yaml") -> FastAPI:
         symbol: str | None = None,
         direction: str | None = None,
         exit_reason: str | None = None,
+        scope: str = Query(default="active", pattern="^(active|all)$"),
     ) -> list[dict[str, Any]]:
-        return enrich_trade_rows(
+        rows = enrich_trade_rows(
             app.state.store,
             app.state.store.list_trades(
                 from_ms=parse_ms(from_),
@@ -341,6 +351,10 @@ def create_app(config_path: str = "config.paper.yaml") -> FastAPI:
                 limit=1000,
             ),
         )
+        if scope == "all":
+            return rows
+        active = app.state.store.get_active_runtime_settings()
+        return [row for row in rows if matches_active_settings(row, active)]
 
     @app.get("/api/equity", dependencies=[Depends(auth)])
     def api_equity(from_: str | None = Query(default=None, alias="from"), to: str | None = None) -> list[dict[str, Any]]:

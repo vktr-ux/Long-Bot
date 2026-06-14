@@ -50,6 +50,7 @@
         <h2>Closed Trades</h2>
         <button id="csv-export">CSV</button>
       </div>
+      <p class="section-note" id="history-scope"></p>
       <div class="filters">
         <input id="filter-symbol" placeholder="Symbol">
         <select id="filter-direction">
@@ -69,7 +70,8 @@
 
     <section class="panel" id="impact">
       <h2>Settings Impact</h2>
-      <div class="table-wrap"><table id="impact-table"></table></div>
+      <p class="section-note">Each settings version keeps its own stats and closed trades. Current History only shows the active version.</p>
+      <div class="impact-list" id="impact-list"></div>
     </section>
 
     <section class="panel" id="settings">

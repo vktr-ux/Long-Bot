@@ -4,6 +4,7 @@ const token = localStorage.getItem("dashboardToken") || "";
 
 let latestTrades = [];
 let latestSettings = null;
+let latestTradingSettings = null;
 let settingsEditorDirty = false;
 
 function money(value, digits = 4) {
@@ -77,9 +78,9 @@ function renderMetrics(summary) {
   `;
 }
 
-function table(target, headers, rows) {
+function table(target, headers, rows, emptyText = "No rows") {
   const head = `<thead><tr>${headers.map((h) => `<th>${h}</th>`).join("")}</tr></thead>`;
-  const body = `<tbody>${rows.join("") || `<tr><td colspan="${headers.length}" class="muted">No rows</td></tr>`}</tbody>`;
+  const body = `<tbody>${rows.join("") || `<tr><td colspan="${headers.length}" class="muted">${escapeHtml(emptyText)}</td></tr>`}</tbody>`;
   document.getElementById(target).innerHTML = head + body;
 }
 
@@ -99,17 +100,23 @@ function renderOpen(rows) {
   }));
 }
 
-function renderTrades(rows) {
+function renderTrades(rows, settingsMeta = latestTradingSettings) {
   latestTrades = rows;
+  const scope = document.getElementById("history-scope");
+  if (scope) {
+    const version = settingsMeta?.version ? `v${settingsMeta.version}` : "active version";
+    const hash = settingsMeta?.settings_hash_short ? ` / ${settingsMeta.settings_hash_short}` : "";
+    scope.textContent = `Showing closed trades for ${version}${hash}. Older versions are archived in Impact.`;
+  }
   table("history-table", ["Time", "Symbol", "Side", "Entry", "Exit", "Qty", "Gross", "Entry Fee", "Exit Fee", "Total Fees", "Slippage", "Net", "ROI", "Reason", "Duration", "MFE", "MAE", "Settings"], rows.map((row) => `
     <tr>
-      <td>${new Date(row.exit_time_ms).toLocaleString()}</td><td>${row.symbol}</td><td>${row.direction}</td>
+      <td>${new Date(row.exit_time_ms).toLocaleString()}</td><td>${escapeHtml(row.symbol)}</td><td>${escapeHtml(row.direction)}</td>
       <td>${Number(row.entry_price).toFixed(6)}</td><td>${Number(row.exit_price).toFixed(6)}</td>
       <td>${Number(row.qty).toFixed(6)}</td><td class="${cls(row.gross_pnl_usdt)}">${money(row.gross_pnl_usdt)}</td>
       <td>${money(row.entry_fee_usdt)}</td><td>${money(row.exit_fee_usdt)}</td><td>${money(row.total_fees_usdt || row.fees_usdt)}</td>
       <td>${money(row.slippage_usdt)}</td><td class="${cls(row.net_pnl_usdt)}">${money(row.net_pnl_usdt)}</td><td>${pct(row.roi_pct)}</td>
-      <td>${row.exit_reason}</td><td>${Number(row.duration_seconds).toFixed(0)}s</td><td>${money(row.mfe_usdt)}</td><td>${money(row.mae_usdt)}</td><td>v${row.strategy_config_version || "legacy"}</td>
-    </tr>`));
+      <td>${escapeHtml(row.exit_reason)}</td><td>${Number(row.duration_seconds).toFixed(0)}s</td><td>${money(row.mfe_usdt)}</td><td>${money(row.mae_usdt)}</td><td>v${row.strategy_config_version || "legacy"}</td>
+    </tr>`), "No closed trades in the active version yet. Check Impact for older versions.");
 }
 
 function renderSignals(rows) {
@@ -160,36 +167,62 @@ function renderImpactTradeRows(rows = []) {
   `;
 }
 
+function impactStat(label, value, klass = "") {
+  return `<div class="impact-stat"><span>${label}</span><strong class="${klass}">${value}</strong></div>`;
+}
+
 function renderImpact(payload) {
+  const target = document.getElementById("impact-list");
+  if (!target) return;
   const versions = Array.isArray(payload?.versions) ? payload.versions : [];
-  const rows = versions.map((row) => {
+  if (!versions.length) {
+    target.innerHTML = `<p class="muted">No settings versions yet</p>`;
+    return;
+  }
+  target.innerHTML = versions.map((row) => {
     const stats = row.stats || {};
     const title = row.version === "legacy" ? "legacy" : `v${row.version}`;
-    const active = row.is_active ? `<span class="pill">active</span>` : "";
+    const active = row.is_active ? `<span class="pill">active</span>` : `<span class="pill muted-pill">archived</span>`;
+    const period = row.first_exit_time_ms
+      ? `${formatTime(row.first_exit_time_ms)} - ${formatTime(row.last_exit_time_ms)}`
+      : "No closed trades";
+    const comment = row.comment ? escapeHtml(row.comment) : "No comment";
+    const openAttr = row.is_active ? " open" : "";
     return `
-    <tr>
-      <td>${title} ${active}</td>
-      <td>${formatTime(row.created_at_ms)}</td>
-      <td>${escapeHtml(row.comment || "")}</td>
-      <td>${stats.trades || 0}</td>
-      <td class="${cls(stats.net_pnl_usdt)}">${money(stats.net_pnl_usdt)}</td>
-      <td>${pct(stats.win_rate_pct)}</td>
-      <td>${Number(stats.profit_factor || 0).toFixed(2)}</td>
-      <td>${money(stats.total_fees_usdt)}</td>
-      <td>
-        <details>
-          <summary>${escapeHtml(row.settings_hash_short || "")} ${formatTime(row.first_exit_time_ms)} - ${formatTime(row.last_exit_time_ms)}</summary>
-          <div class="impact-details">
+      <details class="impact-version${row.is_active ? " active" : ""}"${openAttr}>
+        <summary class="impact-summary">
+          <div class="impact-summary-main">
+            <div>
+              <div class="impact-version-title">${title} ${active}</div>
+              <div class="impact-comment">${comment}</div>
+            </div>
+            <div class="impact-meta">
+              <span>${escapeHtml(row.settings_hash_short || "no hash")}</span>
+              <span>Created ${formatTime(row.created_at_ms)}</span>
+              <span>${period}</span>
+            </div>
+          </div>
+          <div class="impact-stats">
+            ${impactStat("Trades", stats.trades || 0)}
+            ${impactStat("Net", money(stats.net_pnl_usdt), cls(stats.net_pnl_usdt))}
+            ${impactStat("ROI", pct(stats.roi_pct), cls(stats.roi_pct))}
+            ${impactStat("Win", pct(stats.win_rate_pct))}
+            ${impactStat("PF", Number(stats.profit_factor || 0).toFixed(2))}
+            ${impactStat("Fees", money(stats.total_fees_usdt))}
+          </div>
+        </summary>
+        <div class="impact-body">
+          <section class="impact-section">
             <h3>Exit Breakdown</h3>
             ${renderImpactReasonRows(row.by_exit_reason)}
+          </section>
+          <section class="impact-section">
             <h3>Trades</h3>
-            ${renderImpactTradeRows(row.trades)}
-          </div>
-        </details>
-      </td>
-    </tr>`;
-  });
-  table("impact-table", ["Settings", "Created", "Comment", "Trades", "Net PnL", "Win Rate", "PF", "Fees", "Details"], rows);
+            <div class="impact-trades-scroll">${renderImpactTradeRows(row.trades)}</div>
+          </section>
+        </div>
+      </details>`;
+  }).join("");
 }
 
 const settingsHelp = [
@@ -468,6 +501,7 @@ async function refreshSlow() {
   const direction = document.getElementById("filter-direction").value;
   const exitReason = document.getElementById("filter-exit").value.trim();
   const qs = new URLSearchParams();
+  qs.set("scope", "active");
   if (symbol) qs.set("symbol", symbol.toUpperCase());
   if (direction) qs.set("direction", direction);
   if (exitReason) qs.set("exit_reason", exitReason.toUpperCase());
@@ -478,7 +512,8 @@ async function refreshSlow() {
     api("api/bot/status"),
     api("api/impact"),
   ]);
-  renderTrades(trades);
+  latestTradingSettings = tradingSettings;
+  renderTrades(trades, tradingSettings);
   renderSignals(signals);
   renderSettings(tradingSettings, botStatus);
   renderImpact(impact);
@@ -503,7 +538,7 @@ document.getElementById("csv-export").addEventListener("click", () => {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = "paper-trades.csv";
+  a.download = `paper-trades-${latestTradingSettings?.version ? `v${latestTradingSettings.version}` : "active"}.csv`;
   a.click();
   URL.revokeObjectURL(url);
 });
