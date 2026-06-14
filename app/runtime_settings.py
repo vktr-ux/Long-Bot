@@ -139,6 +139,7 @@ class EntrySettings(BaseModel):
     scale_in_enabled: bool = False
     scale_in_step_pct: float = Field(default=0.30, ge=0, le=10)
     scale_in_max_leg_overrun_pct: float = Field(default=0.35, ge=0, le=10)
+    scale_in_reclaim_pct: float = Field(default=0.04, ge=0, le=10)
     trigger_tolerance_pct: float = Field(default=0.02, ge=0, le=5)
     max_entry_distance_above_trigger_pct: float = Field(default=0.45, ge=0, le=50)
     breakout_buffer_pct_min: float = Field(default=0.05, ge=0, le=5)

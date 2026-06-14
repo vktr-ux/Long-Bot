@@ -242,7 +242,8 @@ class PaperBroker:
         next_leg = None
         for leg in sorted(entry_grid, key=lambda item: int(item.get("leg") or 0)):
             leg_number = int(leg.get("leg") or 0)
-            if leg_number > 1 and leg_number not in filled_legs and leg.get("status") != "filled":
+            status = str(leg.get("status") or "").lower()
+            if leg_number > 1 and leg_number not in filled_legs and status not in {"filled", "skipped"}:
                 next_leg = leg
                 break
         if not next_leg:
@@ -255,15 +256,101 @@ class PaperBroker:
             return False
         entry_settings = _runtime_entry_settings(details, self.config)
         max_overrun_pct = float(entry_settings.get("scale_in_max_leg_overrun_pct", 0.35))
+        reclaim_pct = float(entry_settings.get("scale_in_reclaim_pct", 0.0))
+        leg_number = int(next_leg.get("leg") or 0)
+        ts = now_ms()
+
+        def persist_leg_state() -> None:
+            details["scale_in"] = scale_in
+            details["entry_grid"] = [
+                next_leg if int(leg.get("leg") or 0) == leg_number else leg
+                for leg in entry_grid
+            ]
+            self.store.update_paper_position(int(position["id"]), {"details_json": json.dumps(details)})
+
+        def disable_scale_in(reason: str) -> None:
+            next_leg.update({"status": "skipped", "skipped_at_ms": ts, "skip_reason": reason})
+            scale_in["enabled"] = False
+            scale_in["disabled_at_ms"] = ts
+            scale_in["disabled_reason"] = reason
+            persist_leg_state()
+            self.store.record_bot_event(
+                "INFO",
+                "paper",
+                f"scale-in disabled {position['direction']} {position['symbol']}",
+                {"position_id": int(position["id"]), "leg": leg_number, "reason": reason},
+            )
+
         stop = float(position["current_sl_price"])
+        old_entry = float(position["entry_price"])
         if direction == "LONG":
-            if reference_price > trigger or reference_price <= stop:
+            if reference_price <= stop:
                 return False
-            overrun_pct = (trigger - reference_price) / trigger * 100
+            trigger_touched = reference_price <= trigger
+            overrun_pct = (trigger - reference_price) / trigger * 100 if trigger_touched else 0.0
+            reclaim_ready = reference_price >= trigger * (1 + reclaim_pct / 100)
+            improves_entry = reference_price < old_entry
         else:
-            if reference_price < trigger or reference_price >= stop:
+            if reference_price >= stop:
                 return False
-            overrun_pct = (reference_price - trigger) / trigger * 100
+            trigger_touched = reference_price >= trigger
+            overrun_pct = (reference_price - trigger) / trigger * 100 if trigger_touched else 0.0
+            reclaim_ready = reference_price <= trigger * (1 - reclaim_pct / 100)
+            improves_entry = reference_price > old_entry
+
+        if reclaim_pct > 0:
+            status = str(next_leg.get("status") or "").lower()
+            armed = bool(next_leg.get("armed_at_ms")) or status == "armed"
+            if not armed:
+                if not trigger_touched:
+                    return False
+                if overrun_pct > max_overrun_pct:
+                    disable_scale_in(f"scale-in touch overrun {overrun_pct:.3f}% > {max_overrun_pct:.3f}%")
+                    return False
+                next_leg.update(
+                    {
+                        "status": "armed",
+                        "armed_at_ms": ts,
+                        "armed_price": reference_price,
+                        "armed_overrun_pct": overrun_pct,
+                        "reclaim_pct": reclaim_pct,
+                    }
+                )
+                persist_leg_state()
+                self.store.record_bot_event(
+                    "INFO",
+                    "paper",
+                    f"armed scale-in leg {leg_number} {position['direction']} {position['symbol']}",
+                    {"position_id": int(position["id"]), "leg": leg_number, "trigger": trigger, "price": reference_price},
+                )
+                return False
+
+            armed_overrun = float(next_leg.get("armed_overrun_pct") or 0)
+            dirty = False
+            if trigger_touched:
+                if overrun_pct > armed_overrun:
+                    next_leg["armed_overrun_pct"] = overrun_pct
+                    dirty = True
+                if direction == "LONG":
+                    armed_worst = min(float(next_leg.get("armed_worst_price") or reference_price), reference_price)
+                else:
+                    armed_worst = max(float(next_leg.get("armed_worst_price") or reference_price), reference_price)
+                if next_leg.get("armed_worst_price") != armed_worst:
+                    next_leg["armed_worst_price"] = armed_worst
+                    dirty = True
+                armed_overrun = max(armed_overrun, overrun_pct)
+            if armed_overrun > max_overrun_pct:
+                disable_scale_in(f"scale-in armed overrun {armed_overrun:.3f}% > {max_overrun_pct:.3f}%")
+                return False
+            if not reclaim_ready or not improves_entry:
+                if dirty:
+                    persist_leg_state()
+                return False
+            overrun_pct = armed_overrun
+        else:
+            if not trigger_touched:
+                return False
+
         if overrun_pct > max_overrun_pct:
             return False
 
@@ -287,7 +374,6 @@ class PaperBroker:
         if qty * reference_price < min_notional * 1.02:
             return False
 
-        ts = now_ms()
         side = _entry_side(direction)
         fill = simulate_fill(
             side=side,
@@ -298,7 +384,6 @@ class PaperBroker:
             slippage_bps=float(self.paper_cfg.get("entry_slippage_bps", 3)),
             fill_source="binance_public_book_paper_scale_in",
         )
-        old_entry = float(position["entry_price"])
         old_qty = current_qty
         new_qty = old_qty + fill.qty
         new_entry = ((old_entry * old_qty) + (fill.price * fill.qty)) / new_qty

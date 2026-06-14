@@ -658,6 +658,91 @@ def test_paper_broker_executes_controlled_scale_in_leg(tmp_path):
     store.close()
 
 
+def test_scale_in_reclaim_arms_before_filling_next_leg(tmp_path):
+    item = diagnostic(price_change_5m=1.4, price_change_15m=2.8, volume_spike_15m=2.5)
+    decision = DirectionDecision("LONG_CONTINUATION", "LONG", ["scale test"], [], execution_score=90)
+    config = {
+        "entry": {
+            "mode": "confirmation_ladder",
+            "require_trigger_confirmation": False,
+            "legs_enabled": True,
+            "allow_average_down": True,
+            "scale_in_enabled": True,
+            "scale_in_step_pct": 0.30,
+            "scale_in_max_leg_overrun_pct": 0.35,
+            "scale_in_reclaim_pct": 0.04,
+            "leg_weights": [0.50, 0.30, 0.20],
+            "max_legs": 3,
+        },
+        "paper": {
+            "max_position_margin_usdt": 12,
+            "max_account_fraction_as_margin": 0.5,
+            "default_leverage": 8,
+            "max_leverage": 10,
+            "max_loss_per_trade_usdt": 0.9,
+            "initial_sl_pct_min": 0.8,
+            "initial_sl_pct_max": 1.6,
+            "stop_loss_extra_buffer_pct": 0.5,
+            "fallback_min_notional_usdt": 5,
+            "fallback_step_size": 0.001,
+            "fee_rate_taker": 0.0004,
+            "entry_slippage_bps": 3,
+            "exit_slippage_bps": 5,
+            "margin_mode": "isolated",
+            "maintenance_margin_rate": 0.01,
+            "maintenance_amount_usdt": 0,
+        },
+        "exit": {"tp1_trigger_pct_min": 1.2, "tp1_trigger_pct_max": 2.8, "tp1_close_fraction": 1.0},
+        "runtime_settings": {"version": 99, "hash": "scale-hash"},
+    }
+    plan = build_trade_plan(item, decision, symbol_info=None, balance_usdt=100, config=config)
+    assert plan is not None
+
+    store = SQLiteStore(tmp_path / "paper.sqlite3")
+    account_id = store.ensure_paper_account(starting_balance_usdt=100)
+    broker = PaperBroker(store, config, account_id)
+    position_id = broker.open_position(plan, item.ticker, trade_plan_id=None)
+    first = store.get_position(position_id)
+    assert first is not None
+
+    second_trigger = float(plan.entry_grid[1]["trigger_price"])
+    touch_ticker = TickerSnapshot(
+        timestamp_ms=2,
+        exchange="binance",
+        symbol=item.symbol,
+        last_price=second_trigger,
+        bid_price=second_trigger * 0.9999,
+        ask_price=second_trigger,
+        spread_pct=0.02,
+    )
+    assert broker.add_scale_in_leg(first, touch_ticker) is False
+    armed = store.get_position(position_id)
+    assert armed is not None
+    assert armed["qty"] == first["qty"]
+    armed_details = json.loads(armed["details_json"])
+    assert armed_details["entry_grid"][1]["status"] == "armed"
+
+    reclaim_price = second_trigger * 1.0005
+    reclaim_ticker = TickerSnapshot(
+        timestamp_ms=3,
+        exchange="binance",
+        symbol=item.symbol,
+        last_price=reclaim_price,
+        bid_price=reclaim_price * 0.9999,
+        ask_price=reclaim_price,
+        spread_pct=0.02,
+    )
+    assert broker.add_scale_in_leg(armed, reclaim_ticker) is True
+    scaled = store.get_position(position_id)
+    assert scaled is not None
+    assert float(scaled["qty"]) > float(first["qty"])
+    assert float(scaled["qty"]) <= plan.risk.qty
+    scaled_details = json.loads(scaled["details_json"])
+    assert scaled_details["entry_grid"][1]["status"] == "filled"
+    assert scaled_details["entry_grid"][1]["reclaim_pct"] == 0.04
+    store.close()
+
+
 def test_pullback_long_can_use_current_ask_trigger_without_disabling_confirmation():
     item = diagnostic()
     item.candles["1"] = [
@@ -812,7 +897,7 @@ def test_profit_guard_closes_giveback_before_full_stop():
     assert action.reason == "PROFIT_GIVEBACK_EXIT"
 
 
-def test_profit_guard_does_not_close_giveback_below_cost_aware_floor():
+def test_profit_guard_closes_when_cost_aware_floor_was_missed_between_cycles():
     position = base_position()
     details = json.loads(position["details_json"])
     details["profit_started_ms"] = 1_000
@@ -835,8 +920,8 @@ def test_profit_guard_does_not_close_giveback_below_cost_aware_floor():
         },
     )
 
-    assert action.action != "CLOSE"
-    assert action.reason != "PROFIT_GIVEBACK_EXIT"
+    assert action.action == "CLOSE"
+    assert action.reason == "PROFIT_GIVEBACK_EXIT"
 
 
 def test_profit_guard_closes_giveback_at_cost_aware_floor_when_floor_is_lower():

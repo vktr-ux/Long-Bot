@@ -118,7 +118,6 @@ def evaluate_position(position: dict, price: float, timestamp_ms: int, config: d
             pct_tolerance = 0.000001
             if (
                 age_seconds >= guard_min_age
-                and move_pct + pct_tolerance >= net_profit_floor_pct
                 and move_pct <= guarded_stop_floor_pct + pct_tolerance
             ):
                 updates["details_json"] = json.dumps(details)

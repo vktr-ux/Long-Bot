@@ -243,6 +243,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "scale_in_enabled": False,
         "scale_in_step_pct": 0.30,
         "scale_in_max_leg_overrun_pct": 0.35,
+        "scale_in_reclaim_pct": 0.04,
         "trigger_tolerance_pct": 0.02,
         "max_entry_distance_above_trigger_pct": 0.45,
         "breakout_buffer_pct_min": 0.05,

@@ -286,6 +286,7 @@ const settingsHelp = [
   { group: "Entry", path: "entry.scale_in_enabled", about: "Enable controlled scale-in execution for planned entry_grid legs.", values: "true/false. Requires legs_enabled and allow_average_down." },
   { group: "Entry", path: "entry.scale_in_step_pct", about: "Adverse price step between scale-in legs.", values: "Percent. 0.30 means each next leg is 0.30% deeper." },
   { group: "Entry", path: "entry.scale_in_max_leg_overrun_pct", about: "Maximum allowed overrun beyond a leg trigger before that add is skipped.", values: "Percent. Keeps scale-in from catching a fast dump." },
+  { group: "Entry", path: "entry.scale_in_reclaim_pct", about: "Price must reclaim this much after touching a scale-in trigger before the add is executed.", values: "Percent. 0 keeps old instant add behavior; 0.04 waits for a small bounce." },
   { group: "Strategy", path: "strategy.long_continuation_quality_gate", about: "Require regular LONG_CONTINUATION to have 5m momentum, strong 15m impulse, top-active rank, or OI expansion.", values: "true/false. Pullback LONG has separate checks." },
   { group: "Strategy", path: "strategy.long_continuation_min_5m_pct", about: "Minimum 5m gain that passes the LONG_CONTINUATION quality gate.", values: "Percent. 0.50 means 5m >= +0.50%." },
   { group: "Strategy", path: "strategy.long_continuation_strong_15m_pct", about: "Strong 15m impulse that passes the quality gate without 5m continuation.", values: "Percent. 2.50 means 15m >= +2.50%." },
