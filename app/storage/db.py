@@ -276,6 +276,37 @@ CREATE TABLE IF NOT EXISTS equity_snapshots (
 );
 CREATE INDEX IF NOT EXISTS idx_equity_snapshots_account_time
 ON equity_snapshots(account_id, timestamp_ms);
+CREATE TABLE IF NOT EXISTS position_lifecycle_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp_ms INTEGER NOT NULL,
+    position_id INTEGER NOT NULL,
+    account_id INTEGER NOT NULL,
+    symbol TEXT NOT NULL,
+    direction TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    age_seconds REAL NOT NULL,
+    price REAL NOT NULL,
+    entry_price REAL NOT NULL,
+    move_pct REAL NOT NULL,
+    roi_pct REAL NOT NULL,
+    unrealized_pnl_usdt REAL NOT NULL,
+    realized_pnl_usdt REAL NOT NULL,
+    qty REAL NOT NULL,
+    notional_usdt REAL NOT NULL,
+    current_sl_price REAL,
+    tp1_price REAL,
+    mfe_usdt REAL,
+    mae_usdt REAL,
+    strategy_config_version INTEGER,
+    settings_hash TEXT,
+    details_json TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_position_lifecycle_position_time
+ON position_lifecycle_events(position_id, timestamp_ms);
+CREATE INDEX IF NOT EXISTS idx_position_lifecycle_symbol_time
+ON position_lifecycle_events(symbol, timestamp_ms);
+CREATE INDEX IF NOT EXISTS idx_position_lifecycle_event_type
+ON position_lifecycle_events(event_type, timestamp_ms);
 CREATE TABLE IF NOT EXISTS bot_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     timestamp_ms INTEGER NOT NULL,
@@ -936,6 +967,71 @@ class SQLiteStore:
         )
         self.conn.commit()
         return int(cur.lastrowid)
+
+    def insert_position_lifecycle_events(self, events: list[dict[str, Any]]) -> None:
+        if not events:
+            return
+        fields = [
+            "timestamp_ms",
+            "position_id",
+            "account_id",
+            "symbol",
+            "direction",
+            "event_type",
+            "age_seconds",
+            "price",
+            "entry_price",
+            "move_pct",
+            "roi_pct",
+            "unrealized_pnl_usdt",
+            "realized_pnl_usdt",
+            "qty",
+            "notional_usdt",
+            "current_sl_price",
+            "tp1_price",
+            "mfe_usdt",
+            "mae_usdt",
+            "strategy_config_version",
+            "settings_hash",
+            "details_json",
+        ]
+        placeholders = ", ".join("?" for _ in fields)
+        self.conn.executemany(
+            f"INSERT INTO position_lifecycle_events({', '.join(fields)}) VALUES({placeholders})",
+            [[event.get(field) for field in fields] for event in events],
+        )
+        self.conn.commit()
+
+    def list_position_lifecycle_events(
+        self,
+        *,
+        from_ms: int | None = None,
+        to_ms: int | None = None,
+        symbol: str | None = None,
+        position_id: int | None = None,
+        event_type: str | None = None,
+        limit: int = 1000,
+    ) -> list[dict[str, Any]]:
+        query = "SELECT * FROM position_lifecycle_events WHERE 1=1"
+        params: list[Any] = []
+        if from_ms is not None:
+            query += " AND timestamp_ms >= ?"
+            params.append(from_ms)
+        if to_ms is not None:
+            query += " AND timestamp_ms <= ?"
+            params.append(to_ms)
+        if symbol:
+            query += " AND symbol = ?"
+            params.append(symbol.upper())
+        if position_id is not None:
+            query += " AND position_id = ?"
+            params.append(position_id)
+        if event_type:
+            query += " AND event_type = ?"
+            params.append(event_type.upper())
+        query += " ORDER BY timestamp_ms DESC LIMIT ?"
+        params.append(limit)
+        return [dict(row) for row in self.conn.execute(query, params).fetchall()]
 
     def list_trades(
         self,

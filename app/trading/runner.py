@@ -20,6 +20,7 @@ from app.storage.db import SQLiteStore
 from app.storage.models import SymbolInfo, TickerSnapshot
 from app.trading.classifier import classify_direction
 from app.trading.paper import PaperBroker
+from app.trading.position_lifecycle import POSITION_LIFECYCLE_STATE_KEY, prune_position_lifecycle_state, update_position_lifecycle
 from app.trading.position_manager import evaluate_position
 from app.trading.strategy import STRATEGY_VERSION, TradePlan, build_trade_plan
 from app.utils.logging import configure_logging
@@ -290,8 +291,16 @@ def persist_no_trade(store: SQLiteStore, diagnostic, decision, config: dict) -> 
 async def manage_open_positions(connector, store: SQLiteStore, broker: PaperBroker, account_id: int, config: dict) -> int:
     open_positions = store.get_open_positions(account_id)
     if not open_positions:
+        lifecycle_state = store.get_bot_state(POSITION_LIFECYCLE_STATE_KEY, {"positions": {}})
+        if lifecycle_state.get("positions"):
+            store.set_bot_state(POSITION_LIFECYCLE_STATE_KEY, {"positions": {}})
         return await process_paper_commands(connector, store, broker, account_id)
     tickers = await open_position_tickers(connector, open_positions)
+    lifecycle_state = prune_position_lifecycle_state(
+        store.get_bot_state(POSITION_LIFECYCLE_STATE_KEY, {"positions": {}}),
+        {int(position["id"]) for position in open_positions},
+    )
+    lifecycle_events: list[dict[str, Any]] = []
     closed_count = 0
     for position in open_positions:
         ticker = tickers.get(position["symbol"].upper())
@@ -300,6 +309,9 @@ async def manage_open_positions(connector, store: SQLiteStore, broker: PaperBrok
         marked = broker.mark_position(position, ticker)
         direction = marked["direction"].upper()
         price = ticker.bid_price if direction == "LONG" and ticker.bid_price else ticker.ask_price if direction == "SHORT" and ticker.ask_price else ticker.last_price
+        sample_ts = now_ms()
+        lifecycle_state, events = update_position_lifecycle(lifecycle_state, marked, price=float(price), timestamp_ms=sample_ts)
+        lifecycle_events.extend(events)
         action = evaluate_position(marked, price, now_ms(), config)
         if action.updates:
             store.update_paper_position(int(position["id"]), action.updates)
@@ -310,6 +322,9 @@ async def manage_open_positions(connector, store: SQLiteStore, broker: PaperBrok
             trade_id = broker.close_position(int(position["id"]), ticker, action.reason, 1.0)
             if trade_id is not None:
                 closed_count += 1
+    if lifecycle_events:
+        store.insert_position_lifecycle_events(lifecycle_events)
+    store.set_bot_state(POSITION_LIFECYCLE_STATE_KEY, lifecycle_state)
     closed_count += await process_paper_commands(connector, store, broker, account_id)
     snapshot_equity(store, account_id)
     return closed_count
