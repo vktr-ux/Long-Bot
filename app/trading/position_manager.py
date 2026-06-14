@@ -46,6 +46,13 @@ def mfe_move_pct(position: dict) -> float:
     return float(position.get("mfe_usdt") or 0) / notional * 100
 
 
+def price_at_favorable_move(position: dict, move_pct: float) -> float:
+    entry = float(position["entry_price"])
+    if position["direction"].upper() == "LONG":
+        return entry * (1 + move_pct / 100)
+    return entry * (1 - move_pct / 100)
+
+
 def evaluate_position(position: dict, price: float, timestamp_ms: int, config: dict) -> PositionAction:
     details = json.loads(position.get("details_json") or "{}")
     paper_cfg = config.get("paper", {})
@@ -94,11 +101,21 @@ def evaluate_position(position: dict, price: float, timestamp_ms: int, config: d
         guard_trigger_pct = float(exit_settings.get("profit_guard_trigger_pct", paper_cfg.get("profit_guard_trigger_pct", 0.30)))
         guard_floor_pct = float(exit_settings.get("profit_guard_floor_pct", paper_cfg.get("profit_guard_floor_pct", 0.08)))
         guard_min_age = float(exit_settings.get("profit_guard_min_age_seconds", paper_cfg.get("profit_guard_min_age_seconds", 20)))
-        if max_move_pct >= guard_trigger_pct:
+        net_profit_floor_pct = float(details.get("be_plus_move_pct", 0))
+        guarded_stop_floor_pct = max(guard_floor_pct, net_profit_floor_pct)
+        effective_guard_trigger_pct = max(guard_trigger_pct, guarded_stop_floor_pct)
+        if max_move_pct >= effective_guard_trigger_pct:
             if not details.get("profit_guard_armed"):
                 details["profit_guard_armed"] = True
                 details_dirty = True
-            if age_seconds >= guard_min_age and move_pct <= guard_floor_pct:
+            if move_pct >= guarded_stop_floor_pct:
+                guarded_stop = price_at_favorable_move(position, guarded_stop_floor_pct)
+                current_stop = float(position["current_sl_price"])
+                if direction == "LONG":
+                    updates["current_sl_price"] = max(current_stop, guarded_stop)
+                else:
+                    updates["current_sl_price"] = min(current_stop, guarded_stop)
+            if age_seconds >= guard_min_age and net_profit_floor_pct <= move_pct <= guard_floor_pct:
                 updates["details_json"] = json.dumps(details)
                 return PositionAction("CLOSE", "PROFIT_GIVEBACK_EXIT", 1.0, updates)
 
@@ -107,12 +124,13 @@ def evaluate_position(position: dict, price: float, timestamp_ms: int, config: d
         positive_age_seconds = max(0, (timestamp_ms - profit_started_ms) / 1000) if profit_started_ms else 0
         small_exit_seconds = float(exit_settings.get("small_profit_time_exit_seconds", paper_cfg.get("small_profit_time_exit_seconds", 30)))
         small_exit_min_pct = float(exit_settings.get("small_profit_time_exit_min_pct", paper_cfg.get("small_profit_time_exit_min_pct", 0.25)))
+        effective_small_exit_min_pct = max(small_exit_min_pct, float(details.get("be_plus_move_pct", 0)))
         if (
             small_time_enabled
             and small_exit_seconds > 0
-            and max_move_pct >= guard_trigger_pct
+            and max_move_pct >= effective_guard_trigger_pct
             and positive_age_seconds >= small_exit_seconds
-            and move_pct >= small_exit_min_pct
+            and move_pct >= effective_small_exit_min_pct
         ):
             updates["details_json"] = json.dumps(details)
             return PositionAction("CLOSE", "SMALL_PROFIT_TIME_EXIT", 1.0, updates)

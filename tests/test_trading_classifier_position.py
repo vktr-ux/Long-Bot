@@ -547,6 +547,33 @@ def test_profit_guard_closes_giveback_before_full_stop():
 
     action = evaluate_position(
         position,
+        100.36,
+        35_000,
+        {
+            "exit": {
+                "profit_guard_enabled": True,
+                "profit_guard_trigger_pct": 0.30,
+                "profit_guard_floor_pct": 0.40,
+                "profit_guard_min_age_seconds": 20,
+            },
+            "paper": {"time_stop_seconds": 180, "max_hold_seconds": 600},
+        },
+    )
+
+    assert action.action == "CLOSE"
+    assert action.reason == "PROFIT_GIVEBACK_EXIT"
+
+
+def test_profit_guard_does_not_close_giveback_below_cost_aware_floor():
+    position = base_position()
+    details = json.loads(position["details_json"])
+    details["profit_started_ms"] = 1_000
+    position["details_json"] = json.dumps(details)
+    position["notional_usdt"] = 100
+    position["mfe_usdt"] = 0.5
+
+    action = evaluate_position(
+        position,
         100.05,
         35_000,
         {
@@ -560,8 +587,8 @@ def test_profit_guard_closes_giveback_before_full_stop():
         },
     )
 
-    assert action.action == "CLOSE"
-    assert action.reason == "PROFIT_GIVEBACK_EXIT"
+    assert action.action != "CLOSE"
+    assert action.reason != "PROFIT_GIVEBACK_EXIT"
 
 
 def test_small_profit_time_exit_cashes_slow_positive_scalp():
@@ -574,7 +601,7 @@ def test_small_profit_time_exit_cashes_slow_positive_scalp():
 
     action = evaluate_position(
         position,
-        100.30,
+        100.40,
         35_000,
         {
             "exit": {
