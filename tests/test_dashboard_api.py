@@ -94,6 +94,11 @@ web:
     summary = client.get("/api/summary", headers=headers).json()
     assert summary["starting_balance_usdt"] == 20
     assert summary["net_pnl_usdt"] == 0.9
+    assert summary["wins"] == 1
+    assert summary["losses"] == 0
+    assert summary["win_loss_ratio"] is None
+    assert summary["win_loss_target_4x"] is True
+    assert summary["win_loss_target_10x"] is True
     assert summary["open_positions"] == 1
     assert client.get("/api/open-positions", headers=headers).json()[0]["symbol"] == "AAAUSDT"
     manual_close = client.post("/api/paper/close/1", headers=headers).json()
@@ -109,6 +114,9 @@ web:
     impact = client.get("/api/impact", headers=headers).json()
     assert impact["versions"][0]["version"] == "1"
     assert impact["versions"][0]["stats"]["trades"] == 1
+    assert impact["versions"][0]["stats"]["wins"] == 1
+    assert impact["versions"][0]["stats"]["losses"] == 0
+    assert impact["versions"][0]["stats"]["win_loss_ratio"] is None
     assert impact["versions"][0]["trades"][0]["symbol"] == "AAAUSDT"
     store.close()
 
@@ -181,12 +189,23 @@ web:
     summary = client.get("/api/summary", headers=headers).json()
     assert summary["trades"] == 1
     assert summary["net_pnl_usdt"] == 0.2
+    assert summary["wins"] == 1
+    assert summary["losses"] == 0
+    assert summary["win_loss_ratio"] is None
     assert summary["pnl_by_symbol"] == {"NEWUSDT": 0.2}
     assert summary["pnl_by_direction"] == {"LONG": 0.2}
     impact = client.get("/api/impact", headers=headers).json()
     versions = {row["version"]: row for row in impact["versions"]}
     assert versions["1"]["stats"]["trades"] == 1
+    assert versions["1"]["stats"]["wins"] == 0
+    assert versions["1"]["stats"]["losses"] == 1
+    assert versions["1"]["stats"]["win_loss_ratio"] == 0
+    assert versions["1"]["stats"]["win_loss_target_4x"] is False
     assert versions["2"]["stats"]["trades"] == 1
+    assert versions["2"]["stats"]["wins"] == 1
+    assert versions["2"]["stats"]["losses"] == 0
+    assert versions["2"]["stats"]["win_loss_ratio"] is None
+    assert versions["2"]["stats"]["win_loss_target_4x"] is True
     store.close()
 
 

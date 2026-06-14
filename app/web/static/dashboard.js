@@ -40,6 +40,27 @@ function plannedLossUsdt(row) {
   return lossPct > 0 ? notional * lossPct / 100 : 0;
 }
 
+function rr(value) {
+  const num = Number(value || 0);
+  return num ? `${num.toFixed(2)}x` : "-";
+}
+
+function winLossRatioLabel(wins, losses, ratio) {
+  const winCount = Number(wins || 0);
+  const lossCount = Number(losses || 0);
+  if (winCount > 0 && lossCount === 0) return "∞";
+  const num = Number(ratio || 0);
+  return num ? `${num.toFixed(2)}x` : "-";
+}
+
+function winLossRatioClass(wins, losses, ratio) {
+  const winCount = Number(wins || 0);
+  const lossCount = Number(losses || 0);
+  if (winCount === 0 && lossCount === 0) return "";
+  if (winCount > 0 && lossCount === 0) return "pos";
+  return Number(ratio || 0) >= 4 ? "pos" : "neg";
+}
+
 function csvCell(value) {
   const text = String(value ?? "");
   return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
@@ -82,6 +103,8 @@ function metric(label, value, klass = "") {
 }
 
 function renderMetrics(summary) {
+  const wlRatio = winLossRatioLabel(summary.wins, summary.losses, summary.win_loss_ratio);
+  const wlClass = winLossRatioClass(summary.wins, summary.losses, summary.win_loss_ratio);
   document.getElementById("metrics").innerHTML = [
     metric("Equity / Start", `${money(summary.current_equity_usdt)} / ${money(summary.starting_balance_usdt, 2)}`, cls(summary.current_equity_usdt - summary.starting_balance_usdt)),
     metric("Net PnL", money(summary.net_pnl_usdt), cls(summary.net_pnl_usdt)),
@@ -89,6 +112,8 @@ function renderMetrics(summary) {
     metric("Today PnL", money(summary.today_pnl_usdt), cls(summary.today_pnl_usdt)),
     metric("Open Positions", `${summary.open_positions ?? 0} / ${summary.max_open_positions ?? 0}`),
     metric("Trades Today", summary.trades_today ?? 0),
+    metric("Wins / Losses", `${summary.wins ?? 0} / ${summary.losses ?? 0}`, wlClass),
+    metric("W/L Ratio", wlRatio, wlClass),
     metric("Win Rate", pct(summary.win_rate_pct)),
     metric("Max Drawdown", pct(summary.max_drawdown_pct), "neg"),
     metric("Total Fees", money(summary.total_fees_usdt)),
@@ -96,6 +121,7 @@ function renderMetrics(summary) {
   ].join("");
   document.getElementById("tracking").innerHTML = `
     <p>Trades: <strong>${summary.trades}</strong></p>
+    <p>Win/loss target: <strong class="${wlClass}">${wlRatio}</strong> <span class="muted">(goal >= 4.00x, ideal >= 10.00x)</span></p>
     <p>Profit factor: <strong>${Number(summary.profit_factor || 0).toFixed(2)}</strong></p>
     <p>Avg win/loss: <strong>${money(summary.avg_win_usdt)} / ${money(summary.avg_loss_usdt)}</strong></p>
     <p>Stop / BE+ / trailing: <strong>${summary.stopout_count} / ${summary.breakeven_plus_count} / ${summary.trailing_count}</strong></p>
@@ -109,7 +135,7 @@ function table(target, headers, rows, emptyText = "No rows") {
 }
 
 function renderOpen(rows) {
-  table("open-table", ["Time", "Symbol", "Side", "Entry", "Qty", "Notional", "Margin", "Lev", "Mode", "Liq", "SL", "SL%", "TP1", "TP%", "BE+", "Risk", "Cost", "UPnL", "MFE", "MAE", "Age", "Settings", "Close"], rows.map((row) => {
+  table("open-table", ["Time", "Symbol", "Side", "Entry", "Qty", "Notional", "Margin", "Lev", "Mode", "Liq", "SL", "SL%", "TP1", "TP%", "BE+", "Risk", "Plan RR", "Cost", "UPnL", "MFE", "MAE", "Age", "Settings", "Close"], rows.map((row) => {
     const age = Math.max(0, (Date.now() - row.opened_at_ms) / 1000).toFixed(0);
     const details = row.details || {};
     const risk = riskDetails(row);
@@ -118,7 +144,7 @@ function renderOpen(rows) {
       <td>${new Date(row.opened_at_ms).toLocaleTimeString()}</td><td>${row.symbol}</td><td>${row.direction}</td><td>${Number(row.entry_price).toFixed(6)}</td>
       <td>${Number(row.qty).toFixed(6)}</td><td>${money(row.notional_usdt, 2)}</td><td>${money(marginUsdt(row), 2)}</td><td>${Number(row.leverage || 0).toFixed(0)}x</td><td>${escapeHtml(details.margin_mode || "isolated")}</td><td title="${escapeHtml(details.liquidation_source || "")}">${liq ? liq.toFixed(6) : "-"}</td>
       <td>${Number(row.current_sl_price).toFixed(6)}</td><td>${pct(risk.initial_sl_pct)}</td><td>${Number(row.tp1_price).toFixed(6)}</td><td>${pct(details.tp1_trigger_pct)}</td>
-      <td>${Number(details.be_plus_price || 0).toFixed(6)}</td><td title="SL + roundtrip fee/slippage + stop buffer">${money(plannedLossUsdt(row))} / ${pct(risk.loss_sizing_pct)}</td><td>${pct(risk.cost_pct)}</td>
+      <td>${Number(details.be_plus_price || 0).toFixed(6)}</td><td title="SL + roundtrip fee/slippage + stop buffer">${money(plannedLossUsdt(row))} / ${pct(risk.loss_sizing_pct)}</td><td title="target net / planned loss">${rr(details.planned_reward_risk_ratio)}</td><td>${pct(risk.cost_pct)}</td>
       <td class="${cls(row.unrealized_pnl_usdt)}">${money(row.unrealized_pnl_usdt)}</td>
       <td>${money(row.mfe_usdt)}</td><td>${money(row.mae_usdt)}</td><td>${age}s</td><td>v${row.strategy_config_version || details.strategy_config_version || "?"}</td>
       <td><button class="manual-close" data-position-id="${row.id}">Close</button></td>
@@ -134,11 +160,11 @@ function renderTrades(rows, settingsMeta = latestTradingSettings) {
     const hash = settingsMeta?.settings_hash_short ? ` / ${settingsMeta.settings_hash_short}` : "";
     scope.textContent = `Showing closed trades for ${version}${hash}. Older versions are archived in Impact.`;
   }
-  table("history-table", ["Time", "Symbol", "Side", "Entry", "Exit", "Qty", "Notional", "Margin", "Lev", "Mode", "Liq", "Gross", "Entry Fee", "Exit Fee", "Total Fees", "Slippage", "Funding", "Net", "ROI", "Reason", "Duration", "MFE", "MAE", "Settings"], rows.map((row) => `
+  table("history-table", ["Time", "Symbol", "Side", "Entry", "Exit", "Qty", "Notional", "Margin", "Lev", "Mode", "Liq", "Plan RR", "Gross", "Entry Fee", "Exit Fee", "Total Fees", "Slippage", "Funding", "Net", "ROI", "Reason", "Duration", "MFE", "MAE", "Settings"], rows.map((row) => `
     <tr>
       <td>${new Date(row.exit_time_ms).toLocaleString()}</td><td>${escapeHtml(row.symbol)}</td><td>${escapeHtml(row.direction)}</td>
       <td>${Number(row.entry_price).toFixed(6)}</td><td>${Number(row.exit_price).toFixed(6)}</td>
-      <td>${Number(row.qty).toFixed(6)}</td><td>${money(row.notional_usdt, 2)}</td><td>${money(marginUsdt(row), 2)}</td><td>${Number(row.leverage || 0).toFixed(0)}x</td><td>${escapeHtml(row.margin_mode || "isolated")}</td><td>${Number(row.liquidation_price || 0) ? Number(row.liquidation_price).toFixed(6) : "-"}</td><td class="${cls(row.gross_pnl_usdt)}">${money(row.gross_pnl_usdt)}</td>
+      <td>${Number(row.qty).toFixed(6)}</td><td>${money(row.notional_usdt, 2)}</td><td>${money(marginUsdt(row), 2)}</td><td>${Number(row.leverage || 0).toFixed(0)}x</td><td>${escapeHtml(row.margin_mode || "isolated")}</td><td>${Number(row.liquidation_price || 0) ? Number(row.liquidation_price).toFixed(6) : "-"}</td><td>${rr(row.planned_reward_risk_ratio)}</td><td class="${cls(row.gross_pnl_usdt)}">${money(row.gross_pnl_usdt)}</td>
       <td>${money(row.entry_fee_usdt)}</td><td>${money(row.exit_fee_usdt)}</td><td>${money(row.total_fees_usdt || row.fees_usdt)}</td>
       <td>${money(row.slippage_usdt)}</td><td>${money(row.funding_usdt)}</td><td class="${cls(row.net_pnl_usdt)}">${money(row.net_pnl_usdt)}</td><td>${pct(row.roi_pct)}</td>
       <td>${escapeHtml(row.exit_reason)}</td><td>${Number(row.duration_seconds).toFixed(0)}s</td><td>${money(row.mfe_usdt)}</td><td>${money(row.mae_usdt)}</td><td>v${row.strategy_config_version || "legacy"}</td>
@@ -180,12 +206,12 @@ function renderImpactTradeRows(rows = []) {
   if (!rows.length) return `<p class="muted">No trades in this version</p>`;
   return `
     <table class="mini-table">
-      <thead><tr><th>Time</th><th>Symbol</th><th>Side</th><th>Net</th><th>ROI</th><th>Notional</th><th>Margin</th><th>Lev</th><th>Liq</th><th>MFE</th><th>MAE</th><th>Reason</th><th>Duration</th></tr></thead>
+      <thead><tr><th>Time</th><th>Symbol</th><th>Side</th><th>Net</th><th>ROI</th><th>Notional</th><th>Margin</th><th>Lev</th><th>Liq</th><th>RR</th><th>MFE</th><th>MAE</th><th>Reason</th><th>Duration</th></tr></thead>
       <tbody>${rows.map((row) => `
         <tr>
           <td>${formatTime(row.exit_time_ms)}</td><td>${escapeHtml(row.symbol)}</td><td>${escapeHtml(row.direction)}</td>
           <td class="${cls(row.net_pnl_usdt)}">${money(row.net_pnl_usdt)}</td><td>${pct(row.roi_pct)}</td>
-          <td>${money(row.notional_usdt, 2)}</td><td>${money(marginUsdt(row), 2)}</td><td>${Number(row.leverage || 0).toFixed(0)}x</td><td>${Number(row.liquidation_price || 0) ? Number(row.liquidation_price).toFixed(6) : "-"}</td>
+          <td>${money(row.notional_usdt, 2)}</td><td>${money(marginUsdt(row), 2)}</td><td>${Number(row.leverage || 0).toFixed(0)}x</td><td>${Number(row.liquidation_price || 0) ? Number(row.liquidation_price).toFixed(6) : "-"}</td><td>${rr(row.planned_reward_risk_ratio)}</td>
           <td>${money(row.mfe_usdt)}</td><td>${money(row.mae_usdt)}</td><td>${escapeHtml(row.exit_reason)}</td>
           <td>${Number(row.duration_seconds || 0).toFixed(0)}s</td>
         </tr>
@@ -208,6 +234,8 @@ function renderImpact(payload) {
   }
   target.innerHTML = versions.map((row) => {
     const stats = row.stats || {};
+    const wlRatio = winLossRatioLabel(stats.wins, stats.losses, stats.win_loss_ratio);
+    const wlClass = winLossRatioClass(stats.wins, stats.losses, stats.win_loss_ratio);
     const title = row.version === "legacy" ? "legacy" : `v${row.version}`;
     const active = row.is_active ? `<span class="pill">active</span>` : `<span class="pill muted-pill">archived</span>`;
     const period = row.first_exit_time_ms
@@ -233,6 +261,8 @@ function renderImpact(payload) {
             ${impactStat("Trades", stats.trades || 0)}
             ${impactStat("Net", money(stats.net_pnl_usdt), cls(stats.net_pnl_usdt))}
             ${impactStat("ROI", pct(stats.roi_pct), cls(stats.roi_pct))}
+            ${impactStat("W/L", `${stats.wins || 0}/${stats.losses || 0}`, wlClass)}
+            ${impactStat("W/L Ratio", wlRatio, wlClass)}
             ${impactStat("Win", pct(stats.win_rate_pct))}
             ${impactStat("PF", Number(stats.profit_factor || 0).toFixed(2))}
             ${impactStat("Fees", money(stats.total_fees_usdt))}
@@ -367,6 +397,8 @@ const settingsHelp = [
   { group: "Выход", path: "exit.tp1_trigger_pct_max", about: "Максимальное движение цены для TP1.", values: "0-100% и не ниже tp1_trigger_pct_min." },
   { group: "Выход", path: "exit.tp1_extra_after_cost_pct", about: "Минимальный запас движения сверх расчетной стоимости входа/выхода для TP1.", values: "0-100%. Ниже = ближе take profit." },
   { group: "Выход", path: "exit.tp1_close_fraction", about: "Какая доля позиции закрывается на TP1.", values: "Больше 0 и до 1.0. Например 0.5 = половина." },
+  { group: "Выход", path: "exit.min_reward_risk_ratio", about: "Минимальный плановый коэффициент target net profit / planned loss.", values: "0 = выключено; 4 = прибыль должна быть минимум в 4 раза больше расчетного риска." },
+  { group: "Выход", path: "exit.enforce_min_reward_risk_ratio", about: "Не открывать сделку, если TP не дает нужный reward/risk.", values: "true/false." },
   { group: "Выход", path: "exit.profit_guard_enabled", about: "Включает защиту сделки, которая уже дала небольшой плюс, но начинает отдавать движение.", values: "true/false." },
   { group: "Выход", path: "exit.profit_guard_trigger_pct", about: "С какого максимального движения в плюс считать, что сделку уже надо защищать.", values: "0-100% движения цены." },
   { group: "Выход", path: "exit.profit_guard_floor_pct", about: "До какого текущего плюса можно откатиться после срабатывания защиты, прежде чем бот закроет позицию.", values: "0-100% движения цены." },
@@ -566,7 +598,7 @@ document.querySelectorAll(".tab").forEach((button) => {
 });
 
 document.getElementById("csv-export").addEventListener("click", () => {
-  const headers = ["exit_time_ms", "symbol", "direction", "entry_price", "exit_price", "qty", "notional_usdt", "margin_usdt", "leverage", "margin_mode", "liquidation_price", "gross_pnl_usdt", "entry_fee_usdt", "exit_fee_usdt", "fees_usdt", "slippage_usdt", "funding_usdt", "net_pnl_usdt", "roi_pct", "exit_reason", "strategy_config_version"];
+  const headers = ["exit_time_ms", "symbol", "direction", "entry_price", "exit_price", "qty", "notional_usdt", "margin_usdt", "leverage", "margin_mode", "liquidation_price", "planned_reward_risk_ratio", "gross_pnl_usdt", "entry_fee_usdt", "exit_fee_usdt", "fees_usdt", "slippage_usdt", "funding_usdt", "net_pnl_usdt", "roi_pct", "exit_reason", "strategy_config_version"];
   const lines = [headers.join(",")].concat(latestTrades.map((row) => headers.map((key) => csvCell(key === "margin_usdt" ? marginUsdt(row) : row[key])).join(",")));
   const blob = new Blob([lines.join("\n")], { type: "text/csv" });
   const url = URL.createObjectURL(blob);

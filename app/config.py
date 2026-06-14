@@ -256,6 +256,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "tp1_trigger_pct_min": 0.60,
         "tp1_trigger_pct_max": 1.20,
         "tp1_close_fraction": 0.50,
+        "min_reward_risk_ratio": 0.0,
+        "enforce_min_reward_risk_ratio": False,
         "trailing_enabled": True,
         "trailing_start_pct_min": 0.75,
         "trailing_distance_pct_min": 0.35,

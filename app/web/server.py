@@ -62,11 +62,19 @@ def summarize_trades(trades: list[dict[str, Any]], start_balance: float) -> dict
     gross_loss = abs(sum(float(trade["net_pnl_usdt"]) for trade in trades if float(trade["net_pnl_usdt"]) < 0))
     wins = [trade for trade in trades if float(trade["net_pnl_usdt"]) > 0]
     losses = [trade for trade in trades if float(trade["net_pnl_usdt"]) < 0]
+    win_loss_ratio = (len(wins) / len(losses)) if losses else (None if wins else 0.0)
+    loss_win_ratio = (len(losses) / len(wins)) if wins else (float(len(losses)) if losses else 0.0)
     return {
         "trades": len(trades),
+        "wins": len(wins),
+        "losses": len(losses),
         "net_pnl_usdt": net,
         "roi_pct": (net / start_balance * 100) if start_balance else 0,
         "win_rate_pct": (len(wins) / len(trades) * 100) if trades else 0,
+        "win_loss_ratio": win_loss_ratio,
+        "loss_win_ratio": loss_win_ratio,
+        "win_loss_target_4x": len(wins) >= 4 * len(losses) if losses else bool(wins),
+        "win_loss_target_10x": len(wins) >= 10 * len(losses) if losses else bool(wins),
         "profit_factor": (gross_profit / gross_loss) if gross_loss else (gross_profit if gross_profit else 0),
         "avg_win_usdt": (sum(float(t["net_pnl_usdt"]) for t in wins) / len(wins)) if wins else 0,
         "avg_loss_usdt": (sum(float(t["net_pnl_usdt"]) for t in losses) / len(losses)) if losses else 0,
@@ -139,6 +147,10 @@ def compact_trade_row(trade: dict[str, Any]) -> dict[str, Any]:
         "margin_mode",
         "liquidation_price",
         "liquidation_source",
+        "planned_loss_usdt",
+        "planned_target_net_profit_usdt",
+        "planned_reward_risk_ratio",
+        "required_reward_risk_ratio",
         "mfe_usdt",
         "mae_usdt",
         "exit_reason",
@@ -203,6 +215,10 @@ def enrich_trade_rows(store: SQLiteStore, trades: list[dict[str, Any]]) -> list[
         row["margin_mode"] = position_details.get("margin_mode") or "isolated"
         row["liquidation_price"] = position_details.get("liquidation_price")
         row["liquidation_source"] = position_details.get("liquidation_source")
+        row["planned_loss_usdt"] = position_details.get("planned_loss_usdt")
+        row["planned_target_net_profit_usdt"] = position_details.get("planned_target_net_profit_usdt")
+        row["planned_reward_risk_ratio"] = position_details.get("planned_reward_risk_ratio")
+        row["required_reward_risk_ratio"] = position_details.get("required_reward_risk_ratio")
         if row.get("entry_fee_usdt") is None or row.get("exit_fee_usdt") is None:
             fills = store.get_position_fills(int(row["position_id"]))
             direction = row["direction"].upper()
@@ -320,6 +336,10 @@ def create_app(config_path: str = "config.paper.yaml") -> FastAPI:
             bucket["trailing_count"] += 1 if trade["exit_reason"] == "TRAILING_STOP" else 0
         for bucket in by_settings.values():
             bucket["win_rate_pct"] = (bucket["wins"] / bucket["trades"] * 100) if bucket["trades"] else 0
+            bucket["win_loss_ratio"] = (bucket["wins"] / bucket["losses"]) if bucket["losses"] else (None if bucket["wins"] else 0.0)
+            bucket["loss_win_ratio"] = (bucket["losses"] / bucket["wins"]) if bucket["wins"] else (float(bucket["losses"]) if bucket["losses"] else 0.0)
+            bucket["win_loss_target_4x"] = bucket["wins"] >= 4 * bucket["losses"] if bucket["losses"] else bool(bucket["wins"])
+            bucket["win_loss_target_10x"] = bucket["wins"] >= 10 * bucket["losses"] if bucket["losses"] else bool(bucket["wins"])
         return {
             "account": account,
             "current_equity_usdt": float(account.get("equity_usdt") or start_balance),

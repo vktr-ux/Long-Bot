@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 
 from app.scanner.breakout import atr
 from app.scanner.metrics import closed_candles
@@ -41,6 +41,10 @@ class TradePlan:
     maintenance_amount_usdt: float
     liquidation_price: float | None
     liquidation_source: str
+    planned_loss_usdt: float
+    planned_target_net_profit_usdt: float
+    planned_reward_risk_ratio: float
+    required_reward_risk_ratio: float
     reasons: list[str]
     warnings: list[str]
     strategy_config_version: int | None = None
@@ -154,13 +158,33 @@ def build_trade_plan(
     min_profit_usdt = float(exit_cfg.get("min_net_profit_after_breakeven_usdt", paper_cfg.get("min_net_profit_after_breakeven_usdt", 0.02)))
     be_plus_move_pct = ((roundtrip_cost_usdt + min_profit_usdt) / notional * 100) if notional else 999
     tp1_extra_after_cost_pct = float(exit_cfg.get("tp1_extra_after_cost_pct", paper_cfg.get("tp1_extra_after_cost_pct", 0.20)))
+    min_reward_risk_ratio = float(exit_cfg.get("min_reward_risk_ratio", paper_cfg.get("min_reward_risk_ratio", 0.0)) or 0.0)
+    enforce_min_reward_risk_ratio = bool(exit_cfg.get("enforce_min_reward_risk_ratio", paper_cfg.get("enforce_min_reward_risk_ratio", False)))
+    planned_loss_usdt = notional * (risk.loss_sizing_pct / 100)
+    required_rr_tp_pct = (risk.loss_sizing_pct * min_reward_risk_ratio + risk.cost_pct) if min_reward_risk_ratio > 0 else 0.0
     tp1_trigger_pct = float(
         clamp(
-            max(float(exit_cfg.get("tp1_trigger_pct_min", 0.60)), be_plus_move_pct + tp1_extra_after_cost_pct),
+            max(float(exit_cfg.get("tp1_trigger_pct_min", 0.60)), be_plus_move_pct + tp1_extra_after_cost_pct, required_rr_tp_pct),
             float(exit_cfg.get("tp1_trigger_pct_min", 0.60)),
             float(exit_cfg.get("tp1_trigger_pct_max", 1.20)),
         )
     )
+    planned_target_net_profit_usdt = max(0.0, notional * (tp1_trigger_pct / 100) - roundtrip_cost_usdt)
+    planned_reward_risk_ratio = (planned_target_net_profit_usdt / planned_loss_usdt) if planned_loss_usdt > 0 else 0.0
+    if min_reward_risk_ratio > 0:
+        warnings.append(
+            f"planned reward/risk {planned_reward_risk_ratio:.2f}x, required {min_reward_risk_ratio:.2f}x"
+        )
+    if enforce_min_reward_risk_ratio and planned_reward_risk_ratio + 1e-9 < min_reward_risk_ratio:
+        risk = replace(
+            risk,
+            allowed=False,
+            reason=(
+                f"planned reward/risk {planned_reward_risk_ratio:.2f}x "
+                f"below required {min_reward_risk_ratio:.2f}x"
+            ),
+        )
+        warnings.append(risk.reason or "reward/risk filter rejected plan")
     trailing_start_pct = max(float(exit_cfg.get("trailing_start_pct_min", 0.75)), 1.5 * risk.initial_sl_pct)
     trailing_distance_pct = float(
         clamp(
@@ -216,6 +240,10 @@ def build_trade_plan(
         maintenance_amount_usdt=maintenance_amount,
         liquidation_price=liquidation_price,
         liquidation_source=liquidation_source,
+        planned_loss_usdt=planned_loss_usdt,
+        planned_target_net_profit_usdt=planned_target_net_profit_usdt,
+        planned_reward_risk_ratio=planned_reward_risk_ratio,
+        required_reward_risk_ratio=min_reward_risk_ratio,
         reasons=reasons,
         warnings=warnings,
         strategy_config_version=runtime_meta.get("version"),

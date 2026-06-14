@@ -487,6 +487,41 @@ def test_trade_plan_uses_ladder_trigger_for_risk_when_confirmation_required():
     assert plan.risk.entry_price == plan.entry_price
 
 
+def test_trade_plan_can_enforce_min_reward_risk_ratio():
+    item = diagnostic()
+    decision = DirectionDecision("LONG_CONTINUATION", "LONG", ["test"], [], execution_score=82)
+    base_config = {
+        "entry": {"mode": "confirmation_ladder", "require_trigger_confirmation": False, "leg_weights": [1.0], "max_legs": 1},
+        "paper": {
+            "max_position_margin_usdt": 2,
+            "max_account_fraction_as_margin": 0.2,
+            "default_leverage": 5,
+            "max_leverage": 10,
+            "max_loss_per_trade_usdt": 0.2,
+            "initial_sl_pct_min": 0.5,
+            "initial_sl_pct_max": 0.5,
+            "stop_loss_extra_buffer_pct": 0.0,
+        },
+        "exit": {
+            "tp1_trigger_pct_min": 0.6,
+            "tp1_trigger_pct_max": 10.0,
+            "min_reward_risk_ratio": 4.0,
+            "enforce_min_reward_risk_ratio": True,
+        },
+    }
+    plan = build_trade_plan(item, decision, symbol_info=None, balance_usdt=20, config=base_config)
+    assert plan is not None
+    assert plan.status == "planned"
+    assert plan.planned_reward_risk_ratio >= 4
+
+    capped_config = json.loads(json.dumps(base_config))
+    capped_config["exit"]["tp1_trigger_pct_max"] = 1.0
+    capped = build_trade_plan(item, decision, symbol_info=None, balance_usdt=20, config=capped_config)
+    assert capped is not None
+    assert capped.status == "rejected"
+    assert "reward/risk" in (capped.risk.reason or "")
+
+
 def test_pullback_long_can_use_current_ask_trigger_without_disabling_confirmation():
     item = diagnostic()
     item.candles["1"] = [

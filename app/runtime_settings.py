@@ -173,6 +173,8 @@ class ExitSettings(BaseModel):
     tp1_trigger_pct_max: float = Field(default=1.80, ge=0, le=100)
     tp1_extra_after_cost_pct: float = Field(default=0.20, ge=0, le=100)
     tp1_close_fraction: float = Field(default=0.50, gt=0, le=1)
+    min_reward_risk_ratio: float = Field(default=0.0, ge=0, le=100)
+    enforce_min_reward_risk_ratio: bool = False
     profit_guard_enabled: bool = True
     profit_guard_trigger_pct: float = Field(default=0.30, ge=0, le=100)
     profit_guard_floor_pct: float = Field(default=0.08, ge=0, le=100)
@@ -346,6 +348,8 @@ def build_runtime_settings_from_config(config: dict[str, Any]) -> RuntimeTrading
             tp1_trigger_pct_max=exit_cfg.get("tp1_trigger_pct_max", paper.get("tp1_trigger_pct_max", 1.20)),
             tp1_extra_after_cost_pct=exit_cfg.get("tp1_extra_after_cost_pct", paper.get("tp1_extra_after_cost_pct", 0.20)),
             tp1_close_fraction=exit_cfg.get("tp1_close_fraction", paper.get("tp1_close_fraction", 0.50)),
+            min_reward_risk_ratio=exit_cfg.get("min_reward_risk_ratio", paper.get("min_reward_risk_ratio", 0.0)),
+            enforce_min_reward_risk_ratio=exit_cfg.get("enforce_min_reward_risk_ratio", paper.get("enforce_min_reward_risk_ratio", False)),
             profit_guard_enabled=exit_cfg.get("profit_guard_enabled", paper.get("profit_guard_enabled", True)),
             profit_guard_trigger_pct=exit_cfg.get("profit_guard_trigger_pct", paper.get("profit_guard_trigger_pct", 0.30)),
             profit_guard_floor_pct=exit_cfg.get("profit_guard_floor_pct", paper.get("profit_guard_floor_pct", 0.08)),
@@ -517,6 +521,8 @@ def apply_runtime_settings_to_config(
         "tp1_trigger_pct_max": settings.exit.tp1_trigger_pct_max,
         "tp1_extra_after_cost_pct": settings.exit.tp1_extra_after_cost_pct,
         "tp1_close_fraction": settings.exit.tp1_close_fraction,
+        "min_reward_risk_ratio": settings.exit.min_reward_risk_ratio,
+        "enforce_min_reward_risk_ratio": settings.exit.enforce_min_reward_risk_ratio,
         "profit_guard_enabled": settings.exit.profit_guard_enabled,
         "profit_guard_trigger_pct": settings.exit.profit_guard_trigger_pct,
         "profit_guard_floor_pct": settings.exit.profit_guard_floor_pct,

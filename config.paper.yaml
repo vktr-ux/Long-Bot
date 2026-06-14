@@ -164,6 +164,8 @@ exit:
   tp1_trigger_pct_min: 0.80
   tp1_trigger_pct_max: 1.80
   tp1_close_fraction: 0.50
+  min_reward_risk_ratio: 0.0
+  enforce_min_reward_risk_ratio: false
   trailing_enabled: true
   trailing_start_pct_min: 1.20
   trailing_distance_pct_min: 0.45
