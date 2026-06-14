@@ -63,6 +63,7 @@ def _long_execution_score(diagnostic: CandidateDiagnostics, config: dict) -> tup
     funding = metrics.funding_rate
     min_price_15m = float(config.get("filters", {}).get("min_price_change_15m_pct_for_candidate", 0.8))
     min_volume_spike = float(config.get("filters", {}).get("min_volume_spike_for_candidate", 1.4))
+    avoid_aggressive_buy_chase = bool(config.get("strategy", {}).get("avoid_aggressive_buy_chase", False))
 
     if price_5m >= 1.2:
         score = _add_score(reasons, score, 18, f"5m continuation {price_5m:+.2f}%")
@@ -145,8 +146,21 @@ def _long_execution_score(diagnostic: CandidateDiagnostics, config: dict) -> tup
         "funding_ok": funding is None or funding <= 0.001,
         "not_failed_breakout": breakout_state != "FAILED_BREAKOUT",
         "not_hard_chase": not (setup and setup.chase_risk == "HIGH"),
+        "not_aggressive_buy_chase": True,
         "not_immediate_dump": not (price_1m <= -1.2 and price_5m <= -0.3),
     }
+    aggressive_buy_chase = (
+        avoid_aggressive_buy_chase
+        and taker_ratio is not None
+        and taker_ratio >= 1.25
+        and price_15m >= 1.20
+        and price_1m >= -0.05
+        and not (breakout_state == "FRESH_BREAKOUT" and setup and setup.chase_risk == "LOW" and price_15m < 1.50)
+    )
+    if aggressive_buy_chase:
+        blockers["not_aggressive_buy_chase"] = False
+        warnings.append("aggressive buy flow after extension is treated as late chase")
+        score -= 30
 
     if not blockers["buy_flow_ok"]:
         warnings.append("buy flow is not confirmed")
@@ -163,6 +177,8 @@ def _long_execution_score(diagnostic: CandidateDiagnostics, config: dict) -> tup
     if not blockers["not_hard_chase"]:
         warnings.append("HIGH chase risk blocks fresh long entry")
         score -= 25
+    if not blockers["not_aggressive_buy_chase"]:
+        score -= 10
     if not blockers["not_immediate_dump"]:
         warnings.append("immediate momentum flipped down")
         score -= 18
@@ -190,6 +206,9 @@ def _short_execution_score(diagnostic: CandidateDiagnostics) -> tuple[int, list[
     score = 0
     price_1m = metrics.price_change_1m or 0
     price_5m = metrics.price_change_5m or 0
+    price_15m = metrics.price_change_15m or 0
+    price_1h = metrics.price_change_1h or 0
+    price_24h = metrics.price_change_24h
     taker_ratio = metrics.taker_buy_sell_ratio
     funding = metrics.funding_rate
     oi_15m = metrics.oi_change_15m_pct
@@ -212,12 +231,30 @@ def _short_execution_score(diagnostic: CandidateDiagnostics) -> tuple[int, list[
         score = _add_score(reasons, score, 10, f"crowded long funding {funding * 100:.3f}%")
     if _hot_rsi(diagnostic):
         score = _add_score(reasons, score, 8, "hot RSI supports reversal watch")
+    if price_24h is not None and price_24h >= 100:
+        score = _add_score(reasons, score, 18, f"late chase 24h extension {price_24h:+.2f}%")
+    elif price_24h is not None and price_24h >= 70:
+        score = _add_score(reasons, score, 12, f"24h extension {price_24h:+.2f}%")
+    if price_15m >= 2.5 and price_1m <= -0.15:
+        score = _add_score(reasons, score, 10, f"impulse fade {price_15m:+.2f}% / {price_1m:+.2f}%")
+
+    late_chase_fade = (
+        price_24h is not None
+        and price_24h >= 70
+        and price_1m <= -0.15
+        and (
+            (taker_ratio is not None and taker_ratio <= 0.95)
+            or price_5m <= -0.10
+            or price_1h >= 6.0
+        )
+    )
 
     blockers = {
-        "failed_or_blowoff": breakout_state in {"FAILED_BREAKOUT", "OVEREXTENDED_AFTER_BREAKOUT"} or _hot_rsi(diagnostic),
-        "momentum_short": price_1m <= -0.3 and price_5m <= -0.2,
+        "failed_or_blowoff": breakout_state in {"FAILED_BREAKOUT", "OVEREXTENDED_AFTER_BREAKOUT"} or _hot_rsi(diagnostic) or late_chase_fade,
+        "momentum_short": (price_1m <= -0.3 and price_5m <= -0.2) or late_chase_fade,
         "sell_pressure": (taker_ratio is not None and taker_ratio <= 0.95) or ((metrics.price_change_5m or 0) < 0 and (oi_15m or 0) < 0),
-        "not_continuation": not ((metrics.price_change_5m or 0) > 0 and (metrics.price_change_15m or 0) > 0 and (metrics.volume_spike_15m or metrics.turnover_spike_15m or 0) >= 1.4),
+        "not_continuation": late_chase_fade or not ((metrics.price_change_5m or 0) > 0 and (metrics.price_change_15m or 0) > 0 and (metrics.volume_spike_15m or metrics.turnover_spike_15m or 0) >= 1.4),
+        "late_chase_fade": late_chase_fade,
     }
     if not blockers["not_continuation"]:
         warnings.append("strong long continuation context blocks short")
@@ -277,10 +314,13 @@ def classify_direction(diagnostic: CandidateDiagnostics, config: dict) -> Direct
         (metrics.price_change_24h is not None and metrics.price_change_24h > 100)
         and not (breakout_state == "FRESH_BREAKOUT" and diagnostic.setup and diagnostic.setup.chase_risk != "HIGH")
     )
-    if late_chase:
+    if late_chase and not short_enabled:
         return DirectionDecision("NO_TRADE_LATE_CHASE", "NO_TRADE", [], ["24h move already above +100%"])
 
     long_execution_score, long_reasons, long_warnings, long_blockers = _long_execution_score(diagnostic, config)
+    if late_chase:
+        long_blockers["not_hard_chase"] = False
+        long_warnings.append("24h move already above +100%; long chase blocked unless short fade confirms")
     high_conviction_long = (
         long_execution_score >= long_high_conviction_score
         and long_blockers["positive_momentum"]
@@ -289,6 +329,7 @@ def classify_direction(diagnostic: CandidateDiagnostics, config: dict) -> Direct
         and long_blockers["funding_ok"]
         and long_blockers["not_failed_breakout"]
         and long_blockers["not_hard_chase"]
+        and long_blockers["not_aggressive_buy_chase"]
         and long_blockers["not_immediate_dump"]
     )
     long_signal_conditions = [
@@ -301,6 +342,7 @@ def classify_direction(diagnostic: CandidateDiagnostics, config: dict) -> Direct
         long_blockers["funding_ok"],
         long_blockers["not_failed_breakout"],
         long_blockers["not_hard_chase"],
+        long_blockers["not_aggressive_buy_chase"],
         long_blockers["not_immediate_dump"],
     ]
     long_conditions = [long_enabled, *long_signal_conditions[1:]]
@@ -309,6 +351,8 @@ def classify_direction(diagnostic: CandidateDiagnostics, config: dict) -> Direct
         and (long_blockers["volume_confirmed"] or high_conviction_long)
         and long_blockers["buy_flow_ok"]
         and long_blockers["not_failed_breakout"]
+        and long_blockers["not_hard_chase"]
+        and long_blockers["not_aggressive_buy_chase"]
     )
     price_1m = metrics.price_change_1m or 0.0
     price_5m = metrics.price_change_5m or 0.0
@@ -344,6 +388,7 @@ def classify_direction(diagnostic: CandidateDiagnostics, config: dict) -> Direct
         and long_blockers["funding_ok"]
         and long_blockers["not_failed_breakout"]
         and long_blockers["not_hard_chase"]
+        and long_blockers["not_aggressive_buy_chase"]
         and long_blockers["not_immediate_dump"]
     )
     if long_pullback_ok:
@@ -409,15 +454,16 @@ def classify_direction(diagnostic: CandidateDiagnostics, config: dict) -> Direct
 
     short_execution_score, short_reasons, short_warnings, short_blockers = _short_execution_score(diagnostic)
     htf_short_ok = price_1h <= 1.2 and price_4h <= 6.0 and (btc_15m is None or btc_15m <= 0.60) and (btc_1h is None or btc_1h <= 1.20)
+    late_chase_fade = bool(short_blockers.get("late_chase_fade"))
     short_breakdown_ok = (
         short_breakdown_enabled
         and short_enabled
         and short_execution_score >= short_breakdown_min_score
-        and price_1m <= -short_breakdown_min_1m_pct
-        and price_5m <= -short_breakdown_min_5m_pct
-        and htf_short_ok
+        and ((price_1m <= -short_breakdown_min_1m_pct and price_5m <= -short_breakdown_min_5m_pct) or late_chase_fade)
+        and (htf_short_ok or late_chase_fade)
         and (
             breakout_state in {"FAILED_BREAKOUT", "OVEREXTENDED_AFTER_BREAKOUT"}
+            or late_chase_fade
             or (taker_ratio is not None and taker_ratio <= 0.88)
             or (oi_15m is not None and oi_15m <= -2)
             or (funding is not None and funding >= 0.0005)
@@ -456,12 +502,22 @@ def classify_direction(diagnostic: CandidateDiagnostics, config: dict) -> Direct
         warnings.extend(short_warnings)
         return DirectionDecision("SHORT_BLOWOFF_REVERSAL", "SHORT", reasons, warnings, execution_score=short_execution_score)
 
+    if late_chase:
+        warnings.append("24h move already above +100%; no confirmed short fade, long chase skipped")
+        warnings.extend(long_warnings + short_warnings)
+        if short_execution_score > long_execution_score:
+            reasons.extend(short_reasons[:6])
+        else:
+            reasons.extend(long_reasons[:6])
+        return DirectionDecision("NO_TRADE_LATE_CHASE", "NO_TRADE", reasons, warnings, execution_score=max(long_execution_score, short_execution_score))
+
     conflict_bits = [
         long_execution_score >= long_min_score and not long_blockers["positive_momentum"],
         long_blockers["positive_momentum"] and not long_blockers["volume_confirmed"],
         not long_blockers["buy_flow_ok"],
         not long_blockers["funding_ok"],
         not long_blockers["not_failed_breakout"],
+        not long_blockers["not_aggressive_buy_chase"],
     ]
     if any(conflict_bits):
         warnings.append(f"signals conflict, no forced trade; long_execution_score={long_execution_score}, short_execution_score={short_execution_score}")

@@ -82,6 +82,7 @@ storage:
 paper:
   account_name: main
   starting_balance_usdt: 20.0
+  margin_mode: isolated
   scan_interval_seconds: 15
   monitor_interval_seconds: 2
   max_open_positions: 5
@@ -90,6 +91,9 @@ paper:
   max_account_fraction_as_margin: 0.18
   max_leverage: 12
   default_leverage: 8
+  maintenance_margin_rate: 0.01
+  maintenance_amount_usdt: 0.0
+  maintenance_margin_source: assumed
   max_loss_per_trade_usdt: 0.35
   stop_loss_extra_buffer_pct: 0.50
   max_trades_per_hour: 0
@@ -127,6 +131,7 @@ strategy:
   long_high_conviction_score: 82
   short_strict_mode: true
   avoid_late_chase: true
+  avoid_aggressive_buy_chase: false
   avoid_shorting_strong_momentum: true
   inverse_short_immediate_entry: false
 

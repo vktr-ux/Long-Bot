@@ -321,6 +321,83 @@ def test_classifier_allows_high_conviction_continuation_without_volume_spike():
     assert any("high-conviction" in warning for warning in decision.warnings)
 
 
+def test_classifier_can_block_aggressive_buy_chase_when_enabled():
+    item = diagnostic(
+        price_change_1m=0.10,
+        price_change_5m=0.35,
+        price_change_15m=1.85,
+        price_change_1h=3.8,
+        volume_spike_15m=2.4,
+        taker_buy_sell_ratio=1.38,
+        oi_change_15m_pct=2.2,
+    )
+    item.setup = SetupPlan(
+        exchange="binance",
+        symbol="AAAUSDT",
+        setup_type="breakout",
+        current_price=100,
+        entry_context="late impulse",
+        estimated_rr=1.6,
+        chase_risk="MEDIUM",
+    )
+    decision = classify_direction(
+        item,
+        {
+            "filters": {"max_spread_pct": 0.20, "min_volume_spike_for_candidate": 1.4, "min_price_change_15m_pct_for_candidate": 0.8},
+            "paper": {"max_position_margin_usdt": 2, "default_leverage": 5},
+            "strategy": {"long_min_score": 60, "short_min_score": 88, "avoid_aggressive_buy_chase": True},
+        },
+    )
+    assert decision.direction == "NO_TRADE"
+    assert any("aggressive buy flow after extension" in warning for warning in decision.warnings)
+
+
+def test_late_chase_extension_can_be_short_fade_with_sell_flow():
+    item = diagnostic(
+        price_change_1m=-0.28,
+        price_change_5m=0.20,
+        price_change_15m=3.20,
+        price_change_1h=8.0,
+        price_change_24h=125.0,
+        volume_spike_15m=2.2,
+        taker_buy_sell_ratio=0.84,
+        oi_change_15m_pct=-0.8,
+        funding_rate=0.0007,
+        btc_change_15m=0.1,
+        btc_change_1h=0.2,
+    )
+    item.breakout.state = "FRESH_BREAKOUT"
+    item.setup = SetupPlan(
+        exchange="binance",
+        symbol="AAAUSDT",
+        setup_type="breakout",
+        current_price=100,
+        entry_context="late chase fade",
+        estimated_rr=1.4,
+        chase_risk="MEDIUM",
+    )
+    decision = classify_direction(
+        item,
+        {
+            "filters": {"max_spread_pct": 0.20, "min_volume_spike_for_candidate": 1.4, "min_price_change_15m_pct_for_candidate": 0.8},
+            "paper": {"max_position_margin_usdt": 2, "default_leverage": 5},
+            "strategy": {
+                "avoid_late_chase": True,
+                "short_breakdown_entry_enabled": True,
+                "short_breakdown_min_score": 50,
+                "short_breakdown_min_1m_pct": 0.18,
+                "short_breakdown_min_5m_pct": 0.35,
+                "short_enabled": True,
+                "long_enabled": True,
+                "short_min_score": 88,
+            },
+        },
+    )
+    assert decision.direction == "SHORT"
+    assert decision.label == "SHORT_BLOWOFF_REVERSAL"
+    assert any("late chase" in reason for reason in decision.reasons)
+
+
 def test_classifier_allows_fresh_breakout_confirmation_before_price_extension():
     item = diagnostic(
         price_change_1m=0.0,

@@ -127,11 +127,18 @@ def compact_trade_row(trade: dict[str, Any]) -> dict[str, Any]:
         "entry_price",
         "exit_price",
         "qty",
+        "notional_usdt",
+        "margin_usdt",
+        "leverage",
         "gross_pnl_usdt",
+        "funding_usdt",
         "fees_usdt",
         "slippage_usdt",
         "net_pnl_usdt",
         "roi_pct",
+        "margin_mode",
+        "liquidation_price",
+        "liquidation_source",
         "mfe_usdt",
         "mae_usdt",
         "exit_reason",
@@ -185,6 +192,17 @@ def enrich_trade_rows(store: SQLiteStore, trades: list[dict[str, Any]]) -> list[
     enriched: list[dict[str, Any]] = []
     for trade in trades:
         row = dict(trade)
+        position = store.get_position(int(row["position_id"])) if row.get("position_id") else None
+        position_details = safe_json(position.get("details_json") if position else None, {})
+        if position:
+            row["margin_usdt"] = float(position.get("margin_usdt") or 0)
+        elif row.get("notional_usdt") is not None and row.get("leverage"):
+            row["margin_usdt"] = float(row.get("notional_usdt") or 0) / float(row.get("leverage") or 1)
+        else:
+            row["margin_usdt"] = 0.0
+        row["margin_mode"] = position_details.get("margin_mode") or "isolated"
+        row["liquidation_price"] = position_details.get("liquidation_price")
+        row["liquidation_source"] = position_details.get("liquidation_source")
         if row.get("entry_fee_usdt") is None or row.get("exit_fee_usdt") is None:
             fills = store.get_position_fills(int(row["position_id"]))
             direction = row["direction"].upper()

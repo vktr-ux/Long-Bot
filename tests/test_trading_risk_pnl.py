@@ -1,6 +1,6 @@
 from app.storage.models import SymbolInfo
-from app.trading.pnl import candle_exit_reason, closed_trade_from_fills, net_pnl, simulate_fill
-from app.trading.risk import build_risk_plan
+from app.trading.pnl import candle_exit_reason, closed_trade_from_fills, funding_cost_usdt, funding_event_count, net_pnl, simulate_fill
+from app.trading.risk import build_risk_plan, estimate_isolated_liquidation_price
 
 
 PAPER_CFG = {
@@ -92,6 +92,36 @@ def test_fee_slippage_net_pnl_exact_for_long_and_short():
     assert round(short_entry.price, 2) == 99.90
     assert round(short_exit.price, 3) == 98.098
     assert short_net > 1.4
+
+
+def test_funding_cost_counts_8h_events_and_can_credit_short():
+    one_event = funding_event_count(1, 8 * 60 * 60 * 1000, 8 * 60 * 60 * 1000)
+    two_events = funding_event_count(1, 16 * 60 * 60 * 1000, 8 * 60 * 60 * 1000)
+    assert one_event == 1
+    assert two_events == 2
+    assert funding_cost_usdt("LONG", 100, 0.0001, one_event) == 0.01
+    assert funding_cost_usdt("SHORT", 100, 0.0001, one_event) == -0.01
+
+
+def test_isolated_liquidation_price_uses_margin_and_maintenance():
+    long_liq = estimate_isolated_liquidation_price(
+        direction="LONG",
+        entry_price=100,
+        qty=1,
+        isolated_margin_usdt=10,
+        maintenance_margin_rate_value=0.005,
+        maintenance_amount_usdt_value=0,
+    )
+    short_liq = estimate_isolated_liquidation_price(
+        direction="SHORT",
+        entry_price=100,
+        qty=1,
+        isolated_margin_usdt=10,
+        maintenance_margin_rate_value=0.005,
+        maintenance_amount_usdt_value=0,
+    )
+    assert round(long_liq, 6) == 90.452261
+    assert round(short_liq, 6) == 109.452736
 
 
 def test_closed_trade_history_is_computed_from_fills_and_stop_first_ambiguity():

@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass
 
+FUNDING_INTERVAL_MS = 8 * 60 * 60 * 1000
+
 
 @dataclass(slots=True)
 class SimulatedFill:
@@ -68,6 +70,33 @@ def gross_pnl(direction: str, entry_price: float, exit_price: float, qty: float)
 
 def net_pnl(direction: str, entry_price: float, exit_price: float, qty: float, fees: float, slippage: float, funding: float = 0.0) -> float:
     return gross_pnl(direction, entry_price, exit_price, qty) - fees - slippage - funding
+
+
+def funding_event_count(
+    opened_at_ms: int,
+    closed_at_ms: int,
+    next_funding_time_ms: int | None = None,
+    *,
+    interval_ms: int = FUNDING_INTERVAL_MS,
+) -> int:
+    if opened_at_ms <= 0 or closed_at_ms <= opened_at_ms or interval_ms <= 0:
+        return 0
+    if next_funding_time_ms:
+        first_event = int(next_funding_time_ms)
+        if first_event <= opened_at_ms:
+            intervals_to_advance = ((opened_at_ms - first_event) // interval_ms) + 1
+            first_event += intervals_to_advance * interval_ms
+        if first_event > closed_at_ms:
+            return 0
+        return ((closed_at_ms - first_event) // interval_ms) + 1
+    return (closed_at_ms - opened_at_ms) // interval_ms
+
+
+def funding_cost_usdt(direction: str, notional_usdt: float, funding_rate: float | None, event_count: int) -> float:
+    if funding_rate is None or notional_usdt <= 0 or event_count <= 0:
+        return 0.0
+    signed_payment = notional_usdt * float(funding_rate) * int(event_count)
+    return signed_payment if direction.upper() == "LONG" else -signed_payment
 
 
 def weighted_average_price(fills: list[dict]) -> float:

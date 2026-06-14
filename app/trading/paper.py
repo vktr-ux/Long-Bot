@@ -4,7 +4,7 @@ import json
 
 from app.storage.db import SQLiteStore
 from app.storage.models import TickerSnapshot
-from app.trading.pnl import closed_trade_from_fills, gross_pnl, simulate_fill
+from app.trading.pnl import closed_trade_from_fills, funding_cost_usdt, funding_event_count, gross_pnl, simulate_fill
 from app.trading.strategy import TradePlan
 from app.utils.time import now_ms
 
@@ -27,6 +27,47 @@ def _exit_reference_price(direction: str, ticker: TickerSnapshot, fallback: floa
     if direction.upper() == "LONG":
         return ticker.bid_price or ticker.last_price or fallback
     return ticker.ask_price or ticker.last_price or fallback
+
+
+def _to_float(value) -> float | None:
+    try:
+        if value is None:
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _to_int(value) -> int | None:
+    try:
+        if value is None:
+            return None
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def estimate_position_funding(position: dict, ticker: TickerSnapshot, closed_at_ms: int, details: dict) -> tuple[float, dict]:
+    funding_details = dict(details.get("funding") or {})
+    entry_next_funding_ms = _to_int(funding_details.get("entry_next_funding_time_ms"))
+    event_count = funding_event_count(
+        int(position.get("opened_at_ms") or 0),
+        closed_at_ms,
+        entry_next_funding_ms,
+    )
+    rate = _to_float(ticker.funding_rate)
+    if rate is None:
+        rate = _to_float(funding_details.get("entry_rate"))
+    notional = _to_float(position.get("notional_usdt")) or abs(float(position.get("entry_price") or 0) * float(position.get("qty") or 0))
+    funding_usdt = funding_cost_usdt(str(position.get("direction") or ""), notional, rate, event_count)
+    return funding_usdt, {
+        **funding_details,
+        "entry_rate": funding_details.get("entry_rate"),
+        "entry_next_funding_time_ms": entry_next_funding_ms,
+        "exit_rate": rate,
+        "funding_events": event_count,
+        "funding_usdt": funding_usdt,
+    }
 
 
 class PaperBroker:
@@ -57,6 +98,10 @@ class PaperBroker:
         details["be_plus_armed"] = False
         details["strategy_config_version"] = plan.strategy_config_version
         details["settings_hash"] = plan.settings_hash
+        details["funding"] = {
+            "entry_rate": ticker.funding_rate,
+            "entry_next_funding_time_ms": ticker.next_funding_time_ms,
+        }
         position_id = self.store.insert_paper_position(
             {
                 "account_id": self.account_id,
@@ -205,11 +250,15 @@ class PaperBroker:
             filled_at_ms=ts,
         )
         close_gross = gross_pnl(direction, float(position["entry_price"]), fill.price, fill.qty)
-        close_delta = close_gross - fill.fee_usdt - fill.slippage_usdt
         remaining_qty = max(0.0, float(position["qty"]) - fill.qty)
         details = json.loads(position.get("details_json") or "{}")
         if reason == "TP1_PARTIAL":
             details["tp1_done"] = True
+        funding_usdt = 0.0
+        if remaining_qty <= 0:
+            funding_usdt, funding_details = estimate_position_funding(position, ticker, ts, details)
+            details["funding"] = funding_details
+        close_delta = close_gross - fill.fee_usdt - fill.slippage_usdt - funding_usdt
         updates = {
             "qty": remaining_qty,
             "realized_pnl_usdt": float(position.get("realized_pnl_usdt") or 0) + close_delta,
@@ -229,7 +278,7 @@ class PaperBroker:
         if remaining_qty <= 0:
             final_position = self.store.get_position(position_id) or {**position, **updates}
             fills = self.store.get_position_fills(position_id)
-            trade = closed_trade_from_fills(final_position, fills)
+            trade = closed_trade_from_fills(final_position, fills, funding_usdt=funding_usdt)
             trade_id = self.store.insert_paper_trade(trade)
             if final_position.get("trade_plan_id"):
                 self.store.update_trade_plan_status(int(final_position["trade_plan_id"]), "closed")

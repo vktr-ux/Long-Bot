@@ -6,7 +6,13 @@ from app.scanner.breakout import atr
 from app.scanner.metrics import closed_candles
 from app.storage.models import CandidateDiagnostics, SymbolInfo
 from app.trading.classifier import DirectionDecision
-from app.trading.risk import RiskPlan, build_risk_plan
+from app.trading.risk import (
+    RiskPlan,
+    build_risk_plan,
+    estimate_isolated_liquidation_price,
+    maintenance_amount_usdt,
+    maintenance_margin_rate,
+)
 from app.utils.numbers import clamp
 
 STRATEGY_VERSION = "paper_scalper_v8"
@@ -30,6 +36,11 @@ class TradePlan:
     trailing_start_pct: float
     trailing_distance_pct: float
     risk: RiskPlan
+    margin_mode: str
+    maintenance_margin_rate: float
+    maintenance_amount_usdt: float
+    liquidation_price: float | None
+    liquidation_source: str
     reasons: list[str]
     warnings: list[str]
     strategy_config_version: int | None = None
@@ -168,6 +179,21 @@ def build_trade_plan(
     else:
         be_plus_price = price_for_risk * (1 - be_plus_move_pct / 100)
         tp1_price = price_for_risk * (1 - tp1_trigger_pct / 100)
+    margin_mode = str(paper_cfg.get("margin_mode", "isolated")).lower()
+    mmr = maintenance_margin_rate(paper_cfg)
+    maintenance_amount = maintenance_amount_usdt(paper_cfg)
+    liquidation_price = None
+    liquidation_source = "not_applicable"
+    if margin_mode == "isolated":
+        liquidation_price = estimate_isolated_liquidation_price(
+            direction=direction,
+            entry_price=price_for_risk,
+            qty=risk.qty,
+            isolated_margin_usdt=risk.margin_usdt,
+            maintenance_margin_rate_value=mmr,
+            maintenance_amount_usdt_value=maintenance_amount,
+        )
+        liquidation_source = str(paper_cfg.get("maintenance_margin_source", "assumed"))
     return TradePlan(
         exchange=diagnostic.exchange,
         symbol=diagnostic.symbol,
@@ -185,6 +211,11 @@ def build_trade_plan(
         trailing_start_pct=trailing_start_pct,
         trailing_distance_pct=trailing_distance_pct,
         risk=risk,
+        margin_mode=margin_mode,
+        maintenance_margin_rate=mmr,
+        maintenance_amount_usdt=maintenance_amount,
+        liquidation_price=liquidation_price,
+        liquidation_source=liquidation_source,
         reasons=reasons,
         warnings=warnings,
         strategy_config_version=runtime_meta.get("version"),

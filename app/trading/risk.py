@@ -61,6 +61,44 @@ def stop_loss_extra_buffer_fraction(paper_cfg: dict) -> float:
     return max(0.0, float(paper_cfg.get("stop_loss_extra_buffer_pct", 0.50))) / 100
 
 
+def maintenance_margin_rate(paper_cfg: dict) -> float:
+    return max(0.0, float(paper_cfg.get("maintenance_margin_rate", 0.01)))
+
+
+def maintenance_amount_usdt(paper_cfg: dict) -> float:
+    return max(0.0, float(paper_cfg.get("maintenance_amount_usdt", 0.0)))
+
+
+def estimate_isolated_liquidation_price(
+    *,
+    direction: str,
+    entry_price: float,
+    qty: float,
+    isolated_margin_usdt: float,
+    maintenance_margin_rate_value: float,
+    maintenance_amount_usdt_value: float = 0.0,
+) -> float | None:
+    qty = abs(float(qty or 0))
+    entry_price = float(entry_price or 0)
+    isolated_margin_usdt = float(isolated_margin_usdt or 0)
+    mmr = max(0.0, float(maintenance_margin_rate_value or 0))
+    maintenance_amount = max(0.0, float(maintenance_amount_usdt_value or 0))
+    if qty <= 0 or entry_price <= 0 or isolated_margin_usdt <= 0:
+        return None
+    entry_notional = qty * entry_price
+    if direction.upper() == "LONG":
+        denominator = qty * (1 - mmr)
+        if denominator <= 0:
+            return None
+        price = (entry_notional - isolated_margin_usdt - maintenance_amount) / denominator
+    else:
+        denominator = qty * (1 + mmr)
+        if denominator <= 0:
+            return None
+        price = (entry_notional + isolated_margin_usdt + maintenance_amount) / denominator
+    return max(0.0, price)
+
+
 def choose_leverage(spread_pct: float | None, score: int, initial_sl_pct_value: float, paper_cfg: dict) -> float:
     max_leverage = float(paper_cfg.get("max_leverage", 10))
     default_leverage = float(paper_cfg.get("default_leverage", 5))

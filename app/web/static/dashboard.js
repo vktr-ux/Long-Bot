@@ -21,6 +21,30 @@ function cls(value) {
   return Number(value || 0) >= 0 ? "pos" : "neg";
 }
 
+function marginUsdt(row) {
+  const stored = Number(row.margin_usdt || 0);
+  if (Number.isFinite(stored) && stored > 0) return stored;
+  const notional = Number(row.notional_usdt || 0);
+  const leverage = Number(row.leverage || 0);
+  return leverage > 0 ? notional / leverage : 0;
+}
+
+function riskDetails(row) {
+  return row?.details?.risk || {};
+}
+
+function plannedLossUsdt(row) {
+  const risk = riskDetails(row);
+  const lossPct = Number(risk.loss_sizing_pct || 0);
+  const notional = Number(row.notional_usdt || 0);
+  return lossPct > 0 ? notional * lossPct / 100 : 0;
+}
+
+function csvCell(value) {
+  const text = String(value ?? "");
+  return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
 async function api(path, options = {}) {
   const relativePath = path.replace(/^\/+/, "");
   const headers = { "X-Dashboard-Token": token, ...(options.headers || {}) };
@@ -85,14 +109,16 @@ function table(target, headers, rows, emptyText = "No rows") {
 }
 
 function renderOpen(rows) {
-  table("open-table", ["Time", "Symbol", "Side", "Entry", "Qty", "Notional", "Margin", "Lev", "SL", "TP1", "BE+", "Trail", "UPnL", "MFE", "MAE", "Age", "Settings", "Close"], rows.map((row) => {
+  table("open-table", ["Time", "Symbol", "Side", "Entry", "Qty", "Notional", "Margin", "Lev", "Mode", "Liq", "SL", "SL%", "TP1", "TP%", "BE+", "Risk", "Cost", "UPnL", "MFE", "MAE", "Age", "Settings", "Close"], rows.map((row) => {
     const age = Math.max(0, (Date.now() - row.opened_at_ms) / 1000).toFixed(0);
     const details = row.details || {};
+    const risk = riskDetails(row);
+    const liq = Number(details.liquidation_price || 0);
     return `<tr>
       <td>${new Date(row.opened_at_ms).toLocaleTimeString()}</td><td>${row.symbol}</td><td>${row.direction}</td><td>${Number(row.entry_price).toFixed(6)}</td>
-      <td>${Number(row.qty).toFixed(6)}</td><td>${money(row.notional_usdt)}</td><td>${money(row.margin_usdt)}</td><td>${row.leverage}x</td>
-      <td>${Number(row.current_sl_price).toFixed(6)}</td><td>${Number(row.tp1_price).toFixed(6)}</td>
-      <td>${Number(details.be_plus_price || 0).toFixed(6)}</td><td>${row.trailing_active ? "on" : "off"}</td>
+      <td>${Number(row.qty).toFixed(6)}</td><td>${money(row.notional_usdt, 2)}</td><td>${money(marginUsdt(row), 2)}</td><td>${Number(row.leverage || 0).toFixed(0)}x</td><td>${escapeHtml(details.margin_mode || "isolated")}</td><td title="${escapeHtml(details.liquidation_source || "")}">${liq ? liq.toFixed(6) : "-"}</td>
+      <td>${Number(row.current_sl_price).toFixed(6)}</td><td>${pct(risk.initial_sl_pct)}</td><td>${Number(row.tp1_price).toFixed(6)}</td><td>${pct(details.tp1_trigger_pct)}</td>
+      <td>${Number(details.be_plus_price || 0).toFixed(6)}</td><td title="SL + roundtrip fee/slippage + stop buffer">${money(plannedLossUsdt(row))} / ${pct(risk.loss_sizing_pct)}</td><td>${pct(risk.cost_pct)}</td>
       <td class="${cls(row.unrealized_pnl_usdt)}">${money(row.unrealized_pnl_usdt)}</td>
       <td>${money(row.mfe_usdt)}</td><td>${money(row.mae_usdt)}</td><td>${age}s</td><td>v${row.strategy_config_version || details.strategy_config_version || "?"}</td>
       <td><button class="manual-close" data-position-id="${row.id}">Close</button></td>
@@ -108,13 +134,13 @@ function renderTrades(rows, settingsMeta = latestTradingSettings) {
     const hash = settingsMeta?.settings_hash_short ? ` / ${settingsMeta.settings_hash_short}` : "";
     scope.textContent = `Showing closed trades for ${version}${hash}. Older versions are archived in Impact.`;
   }
-  table("history-table", ["Time", "Symbol", "Side", "Entry", "Exit", "Qty", "Gross", "Entry Fee", "Exit Fee", "Total Fees", "Slippage", "Net", "ROI", "Reason", "Duration", "MFE", "MAE", "Settings"], rows.map((row) => `
+  table("history-table", ["Time", "Symbol", "Side", "Entry", "Exit", "Qty", "Notional", "Margin", "Lev", "Mode", "Liq", "Gross", "Entry Fee", "Exit Fee", "Total Fees", "Slippage", "Funding", "Net", "ROI", "Reason", "Duration", "MFE", "MAE", "Settings"], rows.map((row) => `
     <tr>
       <td>${new Date(row.exit_time_ms).toLocaleString()}</td><td>${escapeHtml(row.symbol)}</td><td>${escapeHtml(row.direction)}</td>
       <td>${Number(row.entry_price).toFixed(6)}</td><td>${Number(row.exit_price).toFixed(6)}</td>
-      <td>${Number(row.qty).toFixed(6)}</td><td class="${cls(row.gross_pnl_usdt)}">${money(row.gross_pnl_usdt)}</td>
+      <td>${Number(row.qty).toFixed(6)}</td><td>${money(row.notional_usdt, 2)}</td><td>${money(marginUsdt(row), 2)}</td><td>${Number(row.leverage || 0).toFixed(0)}x</td><td>${escapeHtml(row.margin_mode || "isolated")}</td><td>${Number(row.liquidation_price || 0) ? Number(row.liquidation_price).toFixed(6) : "-"}</td><td class="${cls(row.gross_pnl_usdt)}">${money(row.gross_pnl_usdt)}</td>
       <td>${money(row.entry_fee_usdt)}</td><td>${money(row.exit_fee_usdt)}</td><td>${money(row.total_fees_usdt || row.fees_usdt)}</td>
-      <td>${money(row.slippage_usdt)}</td><td class="${cls(row.net_pnl_usdt)}">${money(row.net_pnl_usdt)}</td><td>${pct(row.roi_pct)}</td>
+      <td>${money(row.slippage_usdt)}</td><td>${money(row.funding_usdt)}</td><td class="${cls(row.net_pnl_usdt)}">${money(row.net_pnl_usdt)}</td><td>${pct(row.roi_pct)}</td>
       <td>${escapeHtml(row.exit_reason)}</td><td>${Number(row.duration_seconds).toFixed(0)}s</td><td>${money(row.mfe_usdt)}</td><td>${money(row.mae_usdt)}</td><td>v${row.strategy_config_version || "legacy"}</td>
     </tr>`), "No closed trades in the active version yet. Check Impact for older versions.");
 }
@@ -154,11 +180,12 @@ function renderImpactTradeRows(rows = []) {
   if (!rows.length) return `<p class="muted">No trades in this version</p>`;
   return `
     <table class="mini-table">
-      <thead><tr><th>Time</th><th>Symbol</th><th>Side</th><th>Net</th><th>ROI</th><th>MFE</th><th>MAE</th><th>Reason</th><th>Duration</th></tr></thead>
+      <thead><tr><th>Time</th><th>Symbol</th><th>Side</th><th>Net</th><th>ROI</th><th>Notional</th><th>Margin</th><th>Lev</th><th>Liq</th><th>MFE</th><th>MAE</th><th>Reason</th><th>Duration</th></tr></thead>
       <tbody>${rows.map((row) => `
         <tr>
           <td>${formatTime(row.exit_time_ms)}</td><td>${escapeHtml(row.symbol)}</td><td>${escapeHtml(row.direction)}</td>
           <td class="${cls(row.net_pnl_usdt)}">${money(row.net_pnl_usdt)}</td><td>${pct(row.roi_pct)}</td>
+          <td>${money(row.notional_usdt, 2)}</td><td>${money(marginUsdt(row), 2)}</td><td>${Number(row.leverage || 0).toFixed(0)}x</td><td>${Number(row.liquidation_price || 0) ? Number(row.liquidation_price).toFixed(6) : "-"}</td>
           <td>${money(row.mfe_usdt)}</td><td>${money(row.mae_usdt)}</td><td>${escapeHtml(row.exit_reason)}</td>
           <td>${Number(row.duration_seconds || 0).toFixed(0)}s</td>
         </tr>
@@ -272,6 +299,7 @@ const settingsHelp = [
   { group: "Стратегия", path: "strategy.long_high_conviction_score", about: "Порог очень сильного LONG setup, который может пройти без части вторичных подтверждений вроде отдельного volume spike.", values: "0-100. Ниже - больше агрессивных входов." },
   { group: "Стратегия", path: "strategy.short_strict_mode", about: "Включает дополнительные строгие проверки перед SHORT-входом.", values: "true/false." },
   { group: "Стратегия", path: "strategy.avoid_late_chase", about: "Не входить, если движение уже слишком далеко ушло и вход похож на позднюю погоню.", values: "true/false." },
+  { group: "Стратегия", path: "strategy.avoid_aggressive_buy_chase", about: "Блокировать LONG, когда агрессивный buy-flow приходит уже после импульса и похож на поздний вход.", values: "true/false. Для свежего low-risk breakout блок не применяется." },
   { group: "Стратегия", path: "strategy.avoid_shorting_strong_momentum", about: "Блокировать шорты против сильного восходящего импульса.", values: "true/false." },
   { group: "Стратегия", path: "strategy.inverse_short_immediate_entry", about: "Для inverse_short входить сразу от LONG-сигнала без подтверждения 1m отката.", values: "true - агрессивно сразу; false - сначала ждать 1m откат минимум на entry.pullback_confirm_pct, затем входить по текущему bid." },
   { group: "Стратегия", path: "strategy.inverse_short_relaxed_conditions", about: "Для inverse_short разрешать SHORT после 1m отката, даже если не все LONG-фильтры идеальны.", values: "true - ловить сдувающийся long-сетап; false - инвертировать только полный LONG_CONTINUATION." },
@@ -285,12 +313,16 @@ const settingsHelp = [
   { group: "Стратегия", path: "strategy.short_breakdown_min_5m_pct", about: "Минимальное падение за 5m для breakdown SHORT.", values: "Проценты. 0.35 значит 5m <= -0.35%." },
 
   { group: "Риск", path: "risk.starting_balance_usdt", about: "Стартовый paper-баланс для расчета PnL/ROI.", values: "Больше 0 USDT." },
+  { group: "Риск", path: "risk.margin_mode", about: "Режим маржи для paper-модели и будущего live/testnet исполнения.", values: "isolated или cross. Для подготовки к бою используем isolated." },
   { group: "Риск", path: "risk.max_open_positions", about: "Максимум одновременно открытых paper-позиций.", values: "1-50. Сейчас целевой лимит - 5." },
   { group: "Риск", path: "risk.max_new_positions_per_cycle", about: "Сколько новых позиций бот может открыть за один полный цикл сканирования.", values: "1-50. Для агрессивного paper-режима сейчас 2." },
   { group: "Риск", path: "risk.max_position_margin_usdt", about: "Максимальная маржа на одну позицию.", values: "Больше 0 USDT." },
   { group: "Риск", path: "risk.max_account_fraction_as_margin", about: "Максимальная доля баланса, которую можно использовать как маржу на одну позицию.", values: "0-1. Например 0.12 = 12%." },
   { group: "Риск", path: "risk.max_leverage", about: "Верхний предел плеча.", values: "1-125." },
   { group: "Риск", path: "risk.default_leverage", about: "Плечо по умолчанию для новых планов.", values: "1-125 и не выше max_leverage." },
+  { group: "Риск", path: "risk.maintenance_margin_rate", about: "Maintenance margin rate для расчетной цены ликвидации isolated-позиции.", values: "0-0.5. Fallback до загрузки точного Binance leverage bracket." },
+  { group: "Риск", path: "risk.maintenance_amount_usdt", about: "Maintenance amount/cum для расчетной цены ликвидации isolated-позиции.", values: "0 и выше USDT. Для маленьких позиций обычно 0." },
+  { group: "Риск", path: "risk.maintenance_margin_source", about: "Источник maintenance-параметров для расчета ликвидации.", values: "assumed, binance_leverage_bracket или binance_position_risk." },
   { group: "Риск", path: "risk.max_loss_per_trade_usdt", about: "Максимально допустимый расчетный убыток на одну сделку.", values: "Больше 0 USDT." },
   { group: "Риск", path: "risk.stop_loss_extra_buffer_pct", about: "Дополнительный запас движения цены для расчета размера позиции на случай проскальзывания и пробоя стопа.", values: "0-10%. Больше = меньше размер позиции и ближе фактический убыток к max_loss_per_trade_usdt." },
   { group: "Риск", path: "risk.max_trades_per_hour", about: "Лимит новых сделок в час.", values: "0 = без лимита; иначе целое число." },
@@ -534,8 +566,8 @@ document.querySelectorAll(".tab").forEach((button) => {
 });
 
 document.getElementById("csv-export").addEventListener("click", () => {
-  const headers = ["exit_time_ms", "symbol", "direction", "entry_price", "exit_price", "qty", "gross_pnl_usdt", "entry_fee_usdt", "exit_fee_usdt", "fees_usdt", "slippage_usdt", "net_pnl_usdt", "roi_pct", "exit_reason", "strategy_config_version"];
-  const lines = [headers.join(",")].concat(latestTrades.map((row) => headers.map((key) => row[key]).join(",")));
+  const headers = ["exit_time_ms", "symbol", "direction", "entry_price", "exit_price", "qty", "notional_usdt", "margin_usdt", "leverage", "margin_mode", "liquidation_price", "gross_pnl_usdt", "entry_fee_usdt", "exit_fee_usdt", "fees_usdt", "slippage_usdt", "funding_usdt", "net_pnl_usdt", "roi_pct", "exit_reason", "strategy_config_version"];
+  const lines = [headers.join(",")].concat(latestTrades.map((row) => headers.map((key) => csvCell(key === "margin_usdt" ? marginUsdt(row) : row[key])).join(",")));
   const blob = new Blob([lines.join("\n")], { type: "text/csv" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");

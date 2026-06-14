@@ -68,6 +68,7 @@ class StrategySettings(BaseModel):
     long_high_conviction_score: int = Field(default=82, ge=0, le=100)
     short_strict_mode: bool = True
     avoid_late_chase: bool = True
+    avoid_aggressive_buy_chase: bool = False
     avoid_shorting_strong_momentum: bool = True
     inverse_short_immediate_entry: bool = False
     inverse_short_relaxed_conditions: bool = False
@@ -89,12 +90,16 @@ class StrategySettings(BaseModel):
 
 class RiskSettings(BaseModel):
     starting_balance_usdt: float = Field(default=20.0, gt=0)
+    margin_mode: Literal["isolated", "cross"] = "isolated"
     max_open_positions: int = Field(default=5, ge=1, le=50)
     max_new_positions_per_cycle: int = Field(default=2, ge=1, le=50)
     max_position_margin_usdt: float = Field(default=3.0, gt=0)
     max_account_fraction_as_margin: float = Field(default=0.18, gt=0, le=1)
     max_leverage: float = Field(default=12, ge=1, le=125)
     default_leverage: float = Field(default=8, ge=1, le=125)
+    maintenance_margin_rate: float = Field(default=0.01, ge=0, le=0.5)
+    maintenance_amount_usdt: float = Field(default=0.0, ge=0)
+    maintenance_margin_source: Literal["assumed", "binance_leverage_bracket", "binance_position_risk"] = "assumed"
     max_loss_per_trade_usdt: float = Field(default=0.35, gt=0)
     stop_loss_extra_buffer_pct: float = Field(default=0.50, ge=0, le=10)
     max_trades_per_hour: int = Field(default=0, ge=0)
@@ -295,12 +300,16 @@ def build_runtime_settings_from_config(config: dict[str, Any]) -> RuntimeTrading
         strategy=StrategySettings(**strategy),
         risk=RiskSettings(
             starting_balance_usdt=paper.get("starting_balance_usdt", 20.0),
+            margin_mode=paper.get("margin_mode", "isolated"),
             max_open_positions=positions.get("max_open_positions", paper.get("max_open_positions", 5)),
             max_new_positions_per_cycle=paper.get("max_new_positions_per_cycle", 2),
             max_position_margin_usdt=paper.get("max_position_margin_usdt", 2.0),
             max_account_fraction_as_margin=paper.get("max_account_fraction_as_margin", 0.12),
             max_leverage=paper.get("max_leverage", 10),
             default_leverage=paper.get("default_leverage", 5),
+            maintenance_margin_rate=paper.get("maintenance_margin_rate", 0.01),
+            maintenance_amount_usdt=paper.get("maintenance_amount_usdt", 0.0),
+            maintenance_margin_source=paper.get("maintenance_margin_source", "assumed"),
             max_loss_per_trade_usdt=paper.get("max_loss_per_trade_usdt", 0.20),
             stop_loss_extra_buffer_pct=paper.get("stop_loss_extra_buffer_pct", 0.50),
             max_trades_per_hour=limits.get("max_trades_per_hour", paper.get("max_trades_per_hour", 0)),
@@ -463,6 +472,7 @@ def apply_runtime_settings_to_config(
 
     paper_update = {
         "starting_balance_usdt": settings.risk.starting_balance_usdt,
+        "margin_mode": settings.risk.margin_mode,
         "scan_interval_seconds": settings.scanner.scan_interval_seconds,
         "monitor_interval_seconds": settings.scanner.monitor_interval_seconds,
         "max_open_positions": settings.risk.max_open_positions,
@@ -471,6 +481,9 @@ def apply_runtime_settings_to_config(
         "max_account_fraction_as_margin": settings.risk.max_account_fraction_as_margin,
         "max_leverage": settings.risk.max_leverage,
         "default_leverage": settings.risk.default_leverage,
+        "maintenance_margin_rate": settings.risk.maintenance_margin_rate,
+        "maintenance_amount_usdt": settings.risk.maintenance_amount_usdt,
+        "maintenance_margin_source": settings.risk.maintenance_margin_source,
         "max_loss_per_trade_usdt": settings.risk.max_loss_per_trade_usdt,
         "stop_loss_extra_buffer_pct": settings.risk.stop_loss_extra_buffer_pct,
         "max_trades_per_hour": settings.risk.max_trades_per_hour,
