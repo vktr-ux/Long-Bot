@@ -201,6 +201,7 @@ const settingsHelp = [
   { group: "Риск", path: "risk.repeat_loss_symbol_cooldown_minutes", about: "Усиленная пауза по символу после нескольких недавних убытков.", values: "0 = выключено; практический режим 180-360 минут." },
   { group: "Риск", path: "risk.repeat_loss_symbol_count", about: "Сколько убытков по символу считать повторной проблемой.", values: "0 = выключено; практический режим 2-3." },
   { group: "Риск", path: "risk.repeat_loss_window_minutes", about: "Окно истории для подсчета повторных убытков по символу.", values: "0 = выключено; практический режим 240-720 минут." },
+  { group: "Риск", path: "risk.cooldown_scope", about: "Какие прошлые сделки учитываются для symbol/direction/loss cooldown.", values: "active_settings - только текущий settings hash; all_history - вся история независимо от версии." },
 
   { group: "Вход", path: "entry.mode", about: "Схема входа в позицию.", values: "confirmation_ladder, single_market, pullback_limit." },
   { group: "Вход", path: "entry.legs_enabled", about: "Разрешить деление входа на несколько частей.", values: "true/false." },

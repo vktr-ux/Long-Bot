@@ -92,6 +92,7 @@ class RiskSettings(BaseModel):
     repeat_loss_symbol_cooldown_minutes: int = Field(default=240, ge=0)
     repeat_loss_symbol_count: int = Field(default=2, ge=0)
     repeat_loss_window_minutes: int = Field(default=360, ge=0)
+    cooldown_scope: Literal["active_settings", "all_history"] = "active_settings"
 
     @model_validator(mode="after")
     def leverage_order(self) -> "RiskSettings":
@@ -293,6 +294,7 @@ def build_runtime_settings_from_config(config: dict[str, Any]) -> RuntimeTrading
             ),
             repeat_loss_symbol_count=limits.get("repeat_loss_symbol_count", paper.get("repeat_loss_symbol_count", 2)),
             repeat_loss_window_minutes=limits.get("repeat_loss_window_minutes", paper.get("repeat_loss_window_minutes", 360)),
+            cooldown_scope=limits.get("cooldown_scope", paper.get("cooldown_scope", "active_settings")),
         ),
         entry=EntrySettings(**entry),
         exit=ExitSettings(
@@ -447,6 +449,7 @@ def apply_runtime_settings_to_config(
         "repeat_loss_symbol_cooldown_minutes": settings.risk.repeat_loss_symbol_cooldown_minutes,
         "repeat_loss_symbol_count": settings.risk.repeat_loss_symbol_count,
         "repeat_loss_window_minutes": settings.risk.repeat_loss_window_minutes,
+        "cooldown_scope": settings.risk.cooldown_scope,
         "fee_rate_taker": settings.fees.fee_rate_taker,
         "fee_rate_maker": settings.fees.fee_rate_maker,
         "entry_slippage_bps": settings.slippage.entry_slippage_bps,
@@ -485,6 +488,7 @@ def apply_runtime_settings_to_config(
         "repeat_loss_symbol_cooldown_minutes": settings.risk.repeat_loss_symbol_cooldown_minutes,
         "repeat_loss_symbol_count": settings.risk.repeat_loss_symbol_count,
         "repeat_loss_window_minutes": settings.risk.repeat_loss_window_minutes,
+        "cooldown_scope": settings.risk.cooldown_scope,
     }
     return merged
 

@@ -24,8 +24,15 @@ class FakeStore:
         return rows[:limit]
 
 
-def _trade(net=0.01, symbol="AAAUSDT", direction="LONG", age_ms=0):
-    return {"net_pnl_usdt": net, "symbol": symbol, "direction": direction, "exit_time_ms": now_ms() - age_ms, "exit_reason": "STOP_LOSS" if net < 0 else "BREAKEVEN_PLUS_STOP"}
+def _trade(net=0.01, symbol="AAAUSDT", direction="LONG", age_ms=0, settings_hash=None):
+    return {
+        "net_pnl_usdt": net,
+        "symbol": symbol,
+        "direction": direction,
+        "exit_time_ms": now_ms() - age_ms,
+        "exit_reason": "STOP_LOSS" if net < 0 else "BREAKEVEN_PLUS_STOP",
+        "settings_hash": settings_hash,
+    }
 
 
 def test_daily_trade_limit_counts_open_positions_opened_today():
@@ -74,6 +81,59 @@ def test_stop_loss_symbol_cooldown_blocks_losing_symbol_longer_than_generic_paus
     )
 
     assert reason.startswith("symbol loss cooldown")
+
+
+def test_symbol_loss_cooldown_can_be_scoped_to_active_settings_hash():
+    store = FakeStore(open_positions=[], trades=[_trade(-0.05, symbol="AAAUSDT", direction="LONG", age_ms=5 * 60 * 1000, settings_hash="old")])
+
+    scoped = cooldown_reason(
+        store,
+        "AAAUSDT",
+        "LONG",
+        {
+            "runtime_settings": {"hash": "new"},
+            "paper": {
+                "cooldown_scope": "active_settings",
+                "symbol_cooldown_minutes": 0,
+                "direction_cooldown_minutes": 0,
+                "stop_loss_symbol_cooldown_minutes": 90,
+            },
+        },
+    )
+    assert scoped is None
+
+    global_scope = cooldown_reason(
+        store,
+        "AAAUSDT",
+        "LONG",
+        {
+            "runtime_settings": {"hash": "new"},
+            "paper": {
+                "cooldown_scope": "all_history",
+                "symbol_cooldown_minutes": 0,
+                "direction_cooldown_minutes": 0,
+                "stop_loss_symbol_cooldown_minutes": 90,
+            },
+        },
+    )
+    assert global_scope.startswith("symbol loss cooldown")
+
+    store = FakeStore(open_positions=[], trades=[_trade(-0.05, symbol="AAAUSDT", direction="LONG", age_ms=5 * 60 * 1000, settings_hash="new")])
+    active_scope = cooldown_reason(
+        store,
+        "AAAUSDT",
+        "LONG",
+        {
+            "runtime_settings": {"hash": "new"},
+            "paper": {
+                "cooldown_scope": "active_settings",
+                "symbol_cooldown_minutes": 0,
+                "direction_cooldown_minutes": 0,
+                "stop_loss_symbol_cooldown_minutes": 90,
+            },
+        },
+    )
+    assert active_scope.startswith("symbol loss cooldown")
 
 
 def test_repeat_loss_symbol_cooldown_blocks_clustered_symbol_losses():

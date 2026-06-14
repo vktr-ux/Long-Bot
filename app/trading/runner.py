@@ -180,6 +180,27 @@ def account_can_open(store: SQLiteStore, account_id: int, config: dict) -> tuple
     return True, None
 
 
+def cooldown_scope(config: dict) -> str:
+    paper_cfg = config.get("paper", {})
+    scope = str(paper_cfg.get("cooldown_scope") or paper_cfg.get("trade_cooldown_scope") or "active_settings").lower()
+    if scope in {"all", "all_history", "global"}:
+        return "all_history"
+    return "active_settings"
+
+
+def trade_in_cooldown_scope(trade: dict, config: dict) -> bool:
+    if cooldown_scope(config) == "all_history":
+        return True
+    current_hash = str(config.get("runtime_settings", {}).get("hash") or "")
+    if not current_hash:
+        return True
+    return str(trade.get("settings_hash") or "") == current_hash
+
+
+def scoped_cooldown_trades(trades: list[dict], config: dict) -> list[dict]:
+    return [trade for trade in trades if trade_in_cooldown_scope(trade, config)]
+
+
 def cooldown_reason(store: SQLiteStore, symbol: str, direction: str, config: dict) -> str | None:
     paper_cfg = config.get("paper", {})
     now = now_ms()
@@ -187,31 +208,31 @@ def cooldown_reason(store: SQLiteStore, symbol: str, direction: str, config: dic
     repeat_loss_window_ms = int(paper_cfg.get("repeat_loss_window_minutes", 0)) * 60 * 1000
     repeat_loss_cooldown_ms = int(paper_cfg.get("repeat_loss_symbol_cooldown_minutes", 0)) * 60 * 1000
     if repeat_loss_count > 0 and repeat_loss_window_ms > 0 and repeat_loss_cooldown_ms > 0:
-        trades = store.list_trades(from_ms=now - repeat_loss_window_ms, symbol=symbol, limit=20)
+        trades = scoped_cooldown_trades(store.list_trades(from_ms=now - repeat_loss_window_ms, symbol=symbol, limit=200), config)
         losses = [trade for trade in trades if float(trade.get("net_pnl_usdt") or 0) < 0]
         if len(losses) >= repeat_loss_count:
             latest_loss_ms = max(int(trade.get("exit_time_ms") or 0) for trade in losses)
             if now - latest_loss_ms <= repeat_loss_cooldown_ms:
-                return f"symbol repeat-loss cooldown active after {len(losses)} losses"
+                return f"symbol repeat-loss cooldown active after {len(losses)} losses ({cooldown_scope(config)})"
 
     stop_loss_cooldown_ms = int(paper_cfg.get("stop_loss_symbol_cooldown_minutes", 0)) * 60 * 1000
     if stop_loss_cooldown_ms > 0:
-        trades = store.list_trades(from_ms=now - stop_loss_cooldown_ms, symbol=symbol, limit=5)
+        trades = scoped_cooldown_trades(store.list_trades(from_ms=now - stop_loss_cooldown_ms, symbol=symbol, limit=100), config)
         for trade in trades:
             exit_reason = str(trade.get("exit_reason") or "").upper()
             if exit_reason == "STOP_LOSS" or float(trade.get("net_pnl_usdt") or 0) < 0:
-                return f"symbol loss cooldown active after {exit_reason or 'negative trade'}"
+                return f"symbol loss cooldown active after {exit_reason or 'negative trade'} ({cooldown_scope(config)})"
 
     symbol_cooldown_ms = int(paper_cfg.get("symbol_cooldown_minutes", 0)) * 60 * 1000
     if symbol_cooldown_ms > 0:
-        trades = store.list_trades(from_ms=now - symbol_cooldown_ms, symbol=symbol, limit=1)
+        trades = scoped_cooldown_trades(store.list_trades(from_ms=now - symbol_cooldown_ms, symbol=symbol, limit=100), config)
         if trades:
-            return f"symbol cooldown active after {trades[0].get('exit_reason') or 'recent trade'}"
+            return f"symbol cooldown active after {trades[0].get('exit_reason') or 'recent trade'} ({cooldown_scope(config)})"
     direction_cooldown_ms = int(paper_cfg.get("direction_cooldown_minutes", 0)) * 60 * 1000
     if direction_cooldown_ms > 0:
-        trades = store.list_trades(from_ms=now - direction_cooldown_ms, direction=direction, limit=1)
+        trades = scoped_cooldown_trades(store.list_trades(from_ms=now - direction_cooldown_ms, direction=direction, limit=200), config)
         if trades:
-            return f"{direction.upper()} cooldown active after recent trade"
+            return f"{direction.upper()} cooldown active after recent trade ({cooldown_scope(config)})"
     return None
 
 

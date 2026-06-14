@@ -195,6 +195,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "repeat_loss_symbol_cooldown_minutes": 240,
         "repeat_loss_symbol_count": 2,
         "repeat_loss_window_minutes": 360,
+        "cooldown_scope": "active_settings",
         "fee_rate_taker": 0.0004,
         "fee_rate_maker": 0.0002,
         "entry_slippage_bps": 3,

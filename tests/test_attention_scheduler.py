@@ -104,3 +104,26 @@ def test_loss_cooldown_symbol_is_removed_from_attention_slots():
 
     assert "S1USDT" not in {item.symbol for item in result.selected}
     assert result.stats["loss_blocked"] == 1
+
+
+def test_loss_cooldown_attention_scope_can_ignore_previous_settings_hash():
+    tickers = [ticker(f"S{i}USDT", i, change_1m=1.0, volume_delta=1_000_000) for i in range(1, 12)]
+    trades = [{"symbol": "S1USDT", "net_pnl_usdt": -0.20, "exit_reason": "STOP_LOSS", "exit_time_ms": 990_000, "settings_hash": "old"}]
+    config = cfg()
+    config["runtime_settings"] = {"hash": "new"}
+    config["paper"].update(
+        {
+            "cooldown_scope": "active_settings",
+            "stop_loss_symbol_cooldown_minutes": 90,
+            "repeat_loss_symbol_count": 2,
+        }
+    )
+
+    scoped = select_attention_candidates(tickers, 8, config, recent_trades=trades, now_ms=1_000_000)
+    assert "S1USDT" in {item.symbol for item in scoped.selected}
+    assert scoped.stats["loss_blocked"] == 0
+
+    config["paper"]["cooldown_scope"] = "all_history"
+    global_scope = select_attention_candidates(tickers, 8, config, recent_trades=trades, now_ms=1_000_000)
+    assert "S1USDT" not in {item.symbol for item in global_scope.selected}
+    assert global_scope.stats["loss_blocked"] == 1

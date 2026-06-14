@@ -143,9 +143,29 @@ def _plan_memory(recent_trade_plans: Sequence[Mapping[str, Any]] | None) -> dict
     return memory
 
 
-def _loss_memory(recent_trades: Sequence[Mapping[str, Any]] | None) -> dict[str, list[dict[str, Any]]]:
+def _cooldown_scope(config: Mapping[str, Any]) -> str:
+    paper = config.get("paper", {}) if isinstance(config.get("paper", {}), Mapping) else {}
+    scope = str(paper.get("cooldown_scope") or paper.get("trade_cooldown_scope") or "active_settings").lower()
+    if scope in {"all", "all_history", "global"}:
+        return "all_history"
+    return "active_settings"
+
+
+def _trade_in_cooldown_scope(row: Mapping[str, Any], config: Mapping[str, Any]) -> bool:
+    if _cooldown_scope(config) == "all_history":
+        return True
+    runtime = config.get("runtime_settings", {}) if isinstance(config.get("runtime_settings", {}), Mapping) else {}
+    current_hash = str(runtime.get("hash") or "")
+    if not current_hash:
+        return True
+    return str(row.get("settings_hash") or "") == current_hash
+
+
+def _loss_memory(recent_trades: Sequence[Mapping[str, Any]] | None, config: Mapping[str, Any]) -> dict[str, list[dict[str, Any]]]:
     memory: dict[str, list[dict[str, Any]]] = {}
     for row in recent_trades or []:
+        if not _trade_in_cooldown_scope(row, config):
+            continue
         symbol = str(row.get("symbol") or "").upper()
         if not symbol:
             continue
@@ -154,7 +174,14 @@ def _loss_memory(recent_trades: Sequence[Mapping[str, Any]] | None) -> dict[str,
         exit_reason = str(row.get("exit_reason") or "").upper()
         if exit_time_ms <= 0 or (net_pnl >= 0 and exit_reason != "STOP_LOSS"):
             continue
-        memory.setdefault(symbol, []).append({"exit_time_ms": exit_time_ms, "net_pnl_usdt": net_pnl, "exit_reason": exit_reason})
+        memory.setdefault(symbol, []).append(
+            {
+                "exit_time_ms": exit_time_ms,
+                "net_pnl_usdt": net_pnl,
+                "exit_reason": exit_reason,
+                "settings_hash": row.get("settings_hash"),
+            }
+        )
     return memory
 
 
@@ -271,7 +298,7 @@ def select_attention_candidates(
         stored["last_plan_score"] = max(_safe_float(stored.get("last_plan_score"), -1.0), _safe_float(memory.get("best_score"), -1.0))
 
     all_tickers_by_symbol = {_symbol(ticker): ticker for ticker in active_watchlist}
-    losses = _loss_memory(recent_trades)
+    losses = _loss_memory(recent_trades, config)
     loss_blocked_symbols = {
         symbol for symbol in all_tickers_by_symbol if _loss_cooldown_active(symbol, losses, config, now_ms)
     }

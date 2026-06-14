@@ -30,6 +30,7 @@ def test_runtime_settings_defaults_match_paper_exploration_profile(tmp_path):
     assert settings.strategy.inverse_short_immediate_entry is False
     assert settings.risk.stop_loss_symbol_cooldown_minutes == 90
     assert settings.risk.repeat_loss_symbol_count == 2
+    assert settings.risk.cooldown_scope == "active_settings"
 
 
 def test_runtime_settings_apply_increments_version_and_audit(tmp_path):
@@ -60,6 +61,7 @@ def test_runtime_settings_db_override_applies_to_config(tmp_path):
     settings.strategy.short_min_score = 95
     settings.strategy.long_signal_execution = "inverse_short"
     settings.strategy.inverse_short_immediate_entry = False
+    settings.risk.cooldown_scope = "all_history"
     effective = apply_runtime_settings_to_config(config, settings, version=7, settings_hash=runtime_settings_hash(settings))
     assert effective["strategy"]["short_min_score"] == 95
     assert effective["strategy"]["long_signal_execution"] == "inverse_short"
@@ -68,6 +70,8 @@ def test_runtime_settings_db_override_applies_to_config(tmp_path):
     assert effective["paper"]["max_daily_trades"] == 0
     assert effective["performance"]["attention_scheduler_enabled"]
     assert effective["paper"]["stop_loss_symbol_cooldown_minutes"] == 90
+    assert effective["paper"]["cooldown_scope"] == "all_history"
+    assert effective["limits"]["cooldown_scope"] == "all_history"
 
 
 def test_runtime_settings_validation_rejects_invalid_ranges():
