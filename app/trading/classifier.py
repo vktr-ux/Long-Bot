@@ -234,6 +234,7 @@ def classify_direction(diagnostic: CandidateDiagnostics, config: dict) -> Direct
     long_signal_execution = str(strategy_cfg.get("long_signal_execution", "normal")).lower()
     inverse_long_signal = long_signal_execution in {"inverse_short", "short_on_long_signal", "contrarian_short"}
     inverse_short_immediate_entry = bool(strategy_cfg.get("inverse_short_immediate_entry", False))
+    inverse_short_relaxed_conditions = bool(strategy_cfg.get("inverse_short_relaxed_conditions", False))
     inverse_short_pullback_pct = float(entry_cfg.get("pullback_confirm_pct", 0.15))
     long_enabled = bool(strategy_cfg.get("long_enabled", True)) and direction_mode in {"both", "long_only", "auto"}
     short_enabled = bool(strategy_cfg.get("short_enabled", True)) and direction_mode in {"both", "short_only", "auto"}
@@ -298,7 +299,19 @@ def classify_direction(diagnostic: CandidateDiagnostics, config: dict) -> Direct
         and long_blockers["not_failed_breakout"]
     )
     inverse_short_pullback_confirmed = (metrics.price_change_1m or 0) <= -inverse_short_pullback_pct
-    if inverse_long_signal and short_enabled and all(long_signal_conditions) and long_execution_score >= inverse_long_min_score:
+    inverse_short_strict_ok = inverse_long_signal and short_enabled and all(long_signal_conditions) and long_execution_score >= inverse_long_min_score
+    inverse_short_relaxed_ok = (
+        inverse_long_signal
+        and short_enabled
+        and inverse_short_relaxed_conditions
+        and long_signal_allowed
+        and long_execution_score >= inverse_long_min_score
+        and long_blockers["positive_momentum"]
+        and long_blockers["not_failed_breakout"]
+        and long_blockers["not_hard_chase"]
+        and long_blockers["not_immediate_dump"]
+    )
+    if inverse_short_strict_ok or inverse_short_relaxed_ok:
         if not inverse_short_immediate_entry and not inverse_short_pullback_confirmed:
             warnings.append(
                 f"inverse short waiting for 1m pullback >= {inverse_short_pullback_pct:.2f}% "
@@ -313,6 +326,8 @@ def classify_direction(diagnostic: CandidateDiagnostics, config: dict) -> Direct
             ]
         )
         warnings.extend(long_warnings)
+        if inverse_short_relaxed_ok and not inverse_short_strict_ok:
+            warnings.append("paper experiment: relaxed inverse-short conditions accepted after pullback")
         if inverse_short_immediate_entry:
             warnings.append("paper experiment: executing long-continuation signal as contrarian SHORT without pullback confirmation")
         else:

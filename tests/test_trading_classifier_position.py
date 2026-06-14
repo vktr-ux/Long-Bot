@@ -147,6 +147,45 @@ def test_inverse_short_waits_for_1m_pullback_when_immediate_entry_disabled():
     assert any("1m pullback confirmation" in reason for reason in confirmed.reasons)
 
 
+def test_relaxed_inverse_short_accepts_high_score_after_pullback_with_soft_long_conflict():
+    item = diagnostic(
+        price_change_1m=-0.08,
+        price_change_5m=1.4,
+        price_change_15m=2.8,
+        price_change_1h=4.5,
+        price_change_4h=9.0,
+        volume_spike_15m=2.4,
+        taker_buy_sell_ratio=0.98,
+        oi_change_15m_pct=2.0,
+        funding_rate=0.0,
+    )
+    cfg = {
+        "filters": {"max_spread_pct": 0.20, "min_volume_spike_for_candidate": 1.4, "min_price_change_15m_pct_for_candidate": 0.8},
+        "entry": {"pullback_confirm_pct": 0.07},
+        "paper": {"max_position_margin_usdt": 2, "default_leverage": 5},
+        "strategy": {
+            "long_signal_execution": "inverse_short",
+            "inverse_short_immediate_entry": False,
+            "inverse_short_relaxed_conditions": False,
+            "long_min_score": 64,
+            "inverse_long_min_score": 64,
+            "short_min_score": 88,
+            "short_enabled": True,
+            "long_enabled": True,
+        },
+    }
+
+    strict = classify_direction(item, cfg)
+    assert strict.direction == "NO_TRADE"
+    assert strict.label == "NO_TRADE_CONFLICT"
+
+    cfg["strategy"]["inverse_short_relaxed_conditions"] = True
+    relaxed = classify_direction(item, cfg)
+    assert relaxed.direction == "SHORT"
+    assert relaxed.label == "SHORT_INVERSE_LONG_SIGNAL"
+    assert any("relaxed inverse-short" in warning for warning in relaxed.warnings)
+
+
 def test_classifier_allows_high_conviction_continuation_without_volume_spike():
     item = diagnostic(
         price_change_1m=0.2,

@@ -70,6 +70,7 @@ class StrategySettings(BaseModel):
     avoid_late_chase: bool = True
     avoid_shorting_strong_momentum: bool = True
     inverse_short_immediate_entry: bool = False
+    inverse_short_relaxed_conditions: bool = False
 
 
 class RiskSettings(BaseModel):

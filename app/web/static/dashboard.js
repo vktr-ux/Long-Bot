@@ -241,6 +241,7 @@ const settingsHelp = [
   { group: "Стратегия", path: "strategy.avoid_late_chase", about: "Не входить, если движение уже слишком далеко ушло и вход похож на позднюю погоню.", values: "true/false." },
   { group: "Стратегия", path: "strategy.avoid_shorting_strong_momentum", about: "Блокировать шорты против сильного восходящего импульса.", values: "true/false." },
   { group: "Стратегия", path: "strategy.inverse_short_immediate_entry", about: "Для inverse_short входить сразу от LONG-сигнала без подтверждения 1m отката.", values: "true - агрессивно сразу; false - сначала ждать 1m откат минимум на entry.pullback_confirm_pct, затем входить по текущему bid." },
+  { group: "Стратегия", path: "strategy.inverse_short_relaxed_conditions", about: "Для inverse_short разрешать SHORT после 1m отката, даже если не все LONG-фильтры идеальны.", values: "true - ловить сдувающийся long-сетап; false - инвертировать только полный LONG_CONTINUATION." },
 
   { group: "Риск", path: "risk.starting_balance_usdt", about: "Стартовый paper-баланс для расчета PnL/ROI.", values: "Больше 0 USDT." },
   { group: "Риск", path: "risk.max_open_positions", about: "Максимум одновременно открытых paper-позиций.", values: "1-50. Сейчас целевой лимит - 5." },
