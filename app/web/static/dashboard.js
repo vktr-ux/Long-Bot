@@ -313,6 +313,7 @@ const settingsHelp = [
   { group: "Вход", path: "entry.market_entry_allowed", about: "Разрешить рыночный вход в paper-модели.", values: "true/false." },
   { group: "Вход", path: "entry.use_limit_ioc_for_paper_model", about: "Моделировать вход как limit IOC там, где это применимо.", values: "true/false." },
   { group: "Вход", path: "entry.require_trigger_confirmation", about: "Не открывать позицию сразу после сигнала, пока цена не пройдет расчетный trigger из entry_grid.", values: "true/false. Для V5 включено." },
+  { group: "Вход", path: "entry.pullback_long_market_entry", about: "Для pullback LONG использовать текущий ask как trigger, не отключая trigger-confirmation для SHORT и других сетапов.", values: "true - buy-the-dip входит по откату; false - ждать общий trigger из entry_grid." },
   { group: "Вход", path: "entry.trigger_tolerance_pct", about: "Допустимая погрешность около trigger, чтобы не терять вход из-за микроскопической разницы bid/ask.", values: "0-5%." },
   { group: "Вход", path: "entry.max_entry_distance_above_trigger_pct", about: "Максимальная дистанция, на которую цена может убежать дальше trigger; выше этого вход считается поздней погоней.", values: "0-50%." },
   { group: "Вход", path: "entry.breakout_buffer_pct_min", about: "Минимальный буфер над/под уровнем пробоя для входной сетки.", values: "0-5% и не выше breakout_buffer_pct_max." },

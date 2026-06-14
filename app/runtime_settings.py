@@ -125,6 +125,7 @@ class EntrySettings(BaseModel):
     market_entry_allowed: bool = True
     use_limit_ioc_for_paper_model: bool = True
     require_trigger_confirmation: bool = True
+    pullback_long_market_entry: bool = False
     trigger_tolerance_pct: float = Field(default=0.02, ge=0, le=5)
     max_entry_distance_above_trigger_pct: float = Field(default=0.45, ge=0, le=50)
     breakout_buffer_pct_min: float = Field(default=0.05, ge=0, le=5)

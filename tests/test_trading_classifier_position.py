@@ -373,6 +373,36 @@ def test_trade_plan_uses_ladder_trigger_for_risk_when_confirmation_required():
     assert plan.risk.entry_price == plan.entry_price
 
 
+def test_pullback_long_can_use_current_ask_trigger_without_disabling_confirmation():
+    item = diagnostic()
+    item.candles["1"] = [
+        Candle(timestamp_ms=1, exchange="binance", symbol="AAAUSDT", interval="1", open=100, high=101, low=99.5, close=100.5, volume=1000, turnover=100_000)
+    ]
+    decision = DirectionDecision("LONG_CONTINUATION", "LONG", ["pullback LONG: execution_score 86 >= 76"], [], execution_score=86)
+    plan = build_trade_plan(
+        item,
+        decision,
+        symbol_info=None,
+        balance_usdt=20,
+        config={
+            "entry": {
+                "mode": "confirmation_ladder",
+                "require_trigger_confirmation": True,
+                "pullback_long_market_entry": True,
+                "leg_weights": [1.0],
+                "max_legs": 1,
+            },
+            "paper": {"max_position_margin_usdt": 2, "max_account_fraction_as_margin": 0.2, "default_leverage": 5, "max_leverage": 10, "max_loss_per_trade_usdt": 0.2},
+            "exit": {},
+        },
+    )
+
+    assert plan is not None
+    assert plan.entry_price == item.ticker.ask_price
+    assert plan.entry_grid[0]["trigger_price"] == item.ticker.ask_price
+    assert any("pullback long uses current ask" in warning for warning in plan.warnings)
+
+
 def test_inverse_short_trade_plan_uses_current_bid_and_short_risk_shape():
     item = diagnostic()
     item.candles["1"] = [

@@ -9,7 +9,7 @@ from app.trading.classifier import DirectionDecision
 from app.trading.risk import RiskPlan, build_risk_plan
 from app.utils.numbers import clamp
 
-STRATEGY_VERSION = "paper_scalper_v7"
+STRATEGY_VERSION = "paper_scalper_v8"
 
 
 @dataclass(slots=True)
@@ -65,6 +65,12 @@ def last_closed_breakout_price(diagnostic: CandidateDiagnostics, direction: str,
     return min(trigger, ticker.bid_price or ticker.last_price)
 
 
+def is_pullback_long_decision(decision: DirectionDecision) -> bool:
+    return decision.direction == "LONG" and decision.label == "LONG_CONTINUATION" and any(
+        str(reason).startswith("pullback LONG") for reason in decision.reasons
+    )
+
+
 def build_trade_plan(
     diagnostic: CandidateDiagnostics,
     decision: DirectionDecision,
@@ -83,6 +89,8 @@ def build_trade_plan(
     entry_price = ticker.ask_price if direction == "LONG" and ticker.ask_price else ticker.bid_price if direction == "SHORT" and ticker.bid_price else ticker.last_price
     ladder_trigger = last_closed_breakout_price(diagnostic, direction)
     if decision.label == "SHORT_INVERSE_LONG_SIGNAL":
+        ladder_trigger = entry_price
+    if bool(entry_cfg.get("pullback_long_market_entry", False)) and is_pullback_long_decision(decision):
         ladder_trigger = entry_price
     trigger_required = bool(entry_cfg.get("require_trigger_confirmation", True)) and entry_cfg.get("mode", "confirmation_ladder") == "confirmation_ladder"
     if trigger_required:
@@ -106,6 +114,8 @@ def build_trade_plan(
             warnings.append("inverse short uses current bid as trigger without pullback confirmation")
         else:
             warnings.append("inverse short uses current bid as trigger after 1m pullback confirmation")
+    if bool(entry_cfg.get("pullback_long_market_entry", False)) and is_pullback_long_decision(decision):
+        warnings.append("pullback long uses current ask as trigger; other setups still require trigger confirmation")
     if not risk.allowed:
         warnings.append(risk.reason or "risk plan rejected")
     notional = risk.notional_usdt
