@@ -283,6 +283,10 @@ function renderImpact(payload) {
 }
 
 const settingsHelp = [
+  { group: "Strategy", path: "strategy.long_continuation_quality_gate", about: "Require regular LONG_CONTINUATION to have 5m momentum, strong 15m impulse, top-active rank, or OI expansion.", values: "true/false. Pullback LONG has separate checks." },
+  { group: "Strategy", path: "strategy.long_continuation_min_5m_pct", about: "Minimum 5m gain that passes the LONG_CONTINUATION quality gate.", values: "Percent. 0.50 means 5m >= +0.50%." },
+  { group: "Strategy", path: "strategy.long_continuation_strong_15m_pct", about: "Strong 15m impulse that passes the quality gate without 5m continuation.", values: "Percent. 2.50 means 15m >= +2.50%." },
+  { group: "Strategy", path: "strategy.long_continuation_top_rank", about: "Best turnover rank treated as top-active confirmation for LONG_CONTINUATION.", values: "1-500. Example: 10 means top-10 only." },
   { group: "Общее", path: "trading_mode", about: "Режим исполнения. Сейчас должен оставаться paper, чтобы бот не отправлял реальные ордера.", values: "paper - только симуляция; testnet/live зарезервированы и требуют защитных лимитов." },
   { group: "Общее", path: "risk_profile", about: "Профиль риска, который описывает назначение текущего набора настроек.", values: "exploration_paper - исследование на paper; live_safety - более строгий профиль для будущего live/testnet." },
 

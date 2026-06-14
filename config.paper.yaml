@@ -134,6 +134,10 @@ strategy:
   avoid_aggressive_buy_chase: false
   avoid_shorting_strong_momentum: true
   inverse_short_immediate_entry: false
+  long_continuation_quality_gate: false
+  long_continuation_min_5m_pct: 0.50
+  long_continuation_strong_15m_pct: 2.50
+  long_continuation_top_rank: 10
 
 entry:
   mode: confirmation_ladder

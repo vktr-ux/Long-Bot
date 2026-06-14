@@ -293,6 +293,10 @@ def classify_direction(diagnostic: CandidateDiagnostics, config: dict) -> Direct
     short_breakdown_min_score = int(strategy_cfg.get("short_breakdown_min_score", 68))
     short_breakdown_min_1m_pct = float(strategy_cfg.get("short_breakdown_min_1m_pct", 0.18))
     short_breakdown_min_5m_pct = float(strategy_cfg.get("short_breakdown_min_5m_pct", 0.35))
+    long_quality_gate_enabled = bool(strategy_cfg.get("long_continuation_quality_gate", False))
+    long_quality_min_5m = float(strategy_cfg.get("long_continuation_min_5m_pct", 0.50))
+    long_quality_strong_15m = float(strategy_cfg.get("long_continuation_strong_15m_pct", 2.50))
+    long_quality_top_rank = int(strategy_cfg.get("long_continuation_top_rank", 10))
 
     spread_limit = float(config.get("filters", {}).get("max_spread_pct", 0.20))
     absolute_spread_skip = float(config.get("filters", {}).get("max_spread_pct_absolute_skip", 0.35))
@@ -372,6 +376,18 @@ def classify_direction(diagnostic: CandidateDiagnostics, config: dict) -> Direct
         or high_conviction_long
     )
     htf_long_ok = price_1h >= -0.6 and price_4h >= -2.5 and (btc_15m is None or btc_15m >= -0.45) and (btc_1h is None or btc_1h >= -0.90)
+    turnover_rank = metrics.turnover_rank_24h
+    long_continuation_quality_ok = (
+        not long_quality_gate_enabled
+        or price_5m >= long_quality_min_5m
+        or price_15m >= long_quality_strong_15m
+        or (turnover_rank is not None and turnover_rank <= long_quality_top_rank)
+        or (oi_15m is not None and oi_15m >= 3.0)
+    )
+    if not long_continuation_quality_ok:
+        long_warnings.append(
+            "long continuation quality gate: needs 5m momentum, strong 15m impulse, top-active rank, or OI expansion"
+        )
     pullback_depth = abs(price_1m) if price_1m < 0 else 0.0
     long_pullback_ok = (
         long_pullback_enabled
@@ -441,6 +457,9 @@ def classify_direction(diagnostic: CandidateDiagnostics, config: dict) -> Direct
         return DirectionDecision("SHORT_INVERSE_LONG_SIGNAL", "SHORT", reasons, warnings, execution_score=long_execution_score)
 
     if not inverse_long_signal and all(long_conditions):
+        if not long_continuation_quality_ok:
+            warnings.extend(long_warnings)
+            return DirectionDecision("NO_TRADE_CONFLICT", "NO_TRADE", long_reasons[:6], warnings, execution_score=long_execution_score)
         reasons.extend([f"execution_score {long_execution_score} >= long_min_score {long_min_score}", *long_reasons])
         warnings.extend(long_warnings)
         if high_conviction_long and not long_blockers["volume_confirmed"]:

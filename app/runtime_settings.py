@@ -72,6 +72,10 @@ class StrategySettings(BaseModel):
     avoid_shorting_strong_momentum: bool = True
     inverse_short_immediate_entry: bool = False
     inverse_short_relaxed_conditions: bool = False
+    long_continuation_quality_gate: bool = False
+    long_continuation_min_5m_pct: float = Field(default=0.50, ge=0, le=50)
+    long_continuation_strong_15m_pct: float = Field(default=2.50, ge=0, le=100)
+    long_continuation_top_rank: int = Field(default=10, ge=1, le=500)
     long_pullback_entry_enabled: bool = False
     long_pullback_min_score: int = Field(default=74, ge=0, le=100)
     long_pullback_min_pct: float = Field(default=0.07, ge=0, le=10)

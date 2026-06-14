@@ -226,6 +226,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "avoid_aggressive_buy_chase": False,
         "avoid_shorting_strong_momentum": True,
         "inverse_short_immediate_entry": False,
+        "long_continuation_quality_gate": False,
+        "long_continuation_min_5m_pct": 0.50,
+        "long_continuation_strong_15m_pct": 2.50,
+        "long_continuation_top_rank": 10,
     },
     "entry": {
         "mode": "confirmation_ladder",

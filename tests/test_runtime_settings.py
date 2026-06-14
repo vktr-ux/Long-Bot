@@ -29,6 +29,10 @@ def test_runtime_settings_defaults_match_paper_exploration_profile(tmp_path):
     assert settings.strategy.inverse_long_min_score == 64
     assert settings.strategy.inverse_short_immediate_entry is False
     assert settings.strategy.inverse_short_relaxed_conditions is False
+    assert settings.strategy.long_continuation_quality_gate is False
+    assert settings.strategy.long_continuation_min_5m_pct == 0.5
+    assert settings.strategy.long_continuation_strong_15m_pct == 2.5
+    assert settings.strategy.long_continuation_top_rank == 10
     assert settings.strategy.long_pullback_entry_enabled is False
     assert settings.strategy.short_breakdown_entry_enabled is False
     assert settings.entry.pullback_long_market_entry is False
@@ -84,6 +88,10 @@ def test_runtime_settings_db_override_applies_to_config(tmp_path):
     settings.strategy.long_signal_execution = "inverse_short"
     settings.strategy.inverse_short_immediate_entry = False
     settings.strategy.inverse_short_relaxed_conditions = True
+    settings.strategy.long_continuation_quality_gate = True
+    settings.strategy.long_continuation_min_5m_pct = 0.7
+    settings.strategy.long_continuation_strong_15m_pct = 3.0
+    settings.strategy.long_continuation_top_rank = 8
     settings.strategy.long_pullback_entry_enabled = True
     settings.strategy.short_breakdown_entry_enabled = True
     settings.entry.pullback_long_market_entry = True
@@ -93,6 +101,10 @@ def test_runtime_settings_db_override_applies_to_config(tmp_path):
     assert effective["strategy"]["long_signal_execution"] == "inverse_short"
     assert effective["strategy"]["inverse_short_immediate_entry"] is False
     assert effective["strategy"]["inverse_short_relaxed_conditions"] is True
+    assert effective["strategy"]["long_continuation_quality_gate"] is True
+    assert effective["strategy"]["long_continuation_min_5m_pct"] == 0.7
+    assert effective["strategy"]["long_continuation_strong_15m_pct"] == 3.0
+    assert effective["strategy"]["long_continuation_top_rank"] == 8
     assert effective["strategy"]["long_pullback_entry_enabled"] is True
     assert effective["strategy"]["short_breakdown_entry_enabled"] is True
     assert effective["entry"]["pullback_long_market_entry"] is True

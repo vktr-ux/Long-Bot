@@ -79,6 +79,50 @@ def test_classifier_uses_execution_score_for_continuation_not_legacy_alert_score
     assert decision.label == "LONG_CONTINUATION"
 
 
+def test_long_continuation_quality_gate_blocks_weak_fast_confirmation():
+    item = diagnostic(
+        price_change_1m=0.02,
+        price_change_5m=0.05,
+        price_change_15m=1.33,
+        price_change_1h=4.08,
+        volume_spike_15m=1.55,
+        taker_buy_sell_ratio=1.30,
+        oi_change_15m_pct=0.03,
+    )
+    item.setup = SetupPlan(
+        exchange="binance",
+        symbol="AAAUSDT",
+        setup_type="BREAKOUT",
+        current_price=100,
+        entry_context="fresh breakout",
+        estimated_rr=3.01,
+        chase_risk="LOW",
+    )
+    config = {
+        "filters": {"max_spread_pct": 0.20, "min_volume_spike_for_candidate": 1.4, "min_price_change_15m_pct_for_candidate": 0.8},
+        "paper": {"max_position_margin_usdt": 2, "default_leverage": 5},
+        "strategy": {
+            "long_min_score": 74,
+            "long_high_conviction_score": 84,
+            "short_min_score": 88,
+            "long_continuation_quality_gate": True,
+            "long_continuation_min_5m_pct": 0.50,
+            "long_continuation_strong_15m_pct": 2.50,
+            "long_continuation_top_rank": 10,
+        },
+    }
+
+    blocked = classify_direction(item, config)
+    assert blocked.direction == "NO_TRADE"
+    assert blocked.label == "NO_TRADE_CONFLICT"
+    assert any("quality gate" in warning for warning in blocked.warnings)
+
+    item.metrics.price_change_5m = 0.55
+    accepted = classify_direction(item, config)
+    assert accepted.direction == "LONG"
+    assert accepted.label == "LONG_CONTINUATION"
+
+
 def test_classifier_can_execute_long_signal_as_inverse_short():
     item = diagnostic(
         price_change_1m=0.25,
