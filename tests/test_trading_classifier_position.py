@@ -223,6 +223,43 @@ def test_cost_aware_pullback_long_enters_after_controlled_dip_in_strong_context(
     assert any("pullback LONG" in reason for reason in decision.reasons)
 
 
+def test_pullback_long_mode_does_not_disable_high_score_continuation_long():
+    item = diagnostic(
+        price_change_1m=0.20,
+        price_change_5m=1.55,
+        price_change_15m=2.60,
+        price_change_1h=4.4,
+        volume_spike_15m=2.2,
+        turnover_spike_15m=2.1,
+        taker_buy_sell_ratio=1.28,
+        oi_change_15m_pct=1.4,
+        funding_rate=0.0001,
+        btc_change_15m=0.05,
+        btc_change_1h=0.2,
+    )
+    decision = classify_direction(
+        item,
+        {
+            "filters": {"max_spread_pct": 0.20, "min_volume_spike_for_candidate": 1.4, "min_price_change_15m_pct_for_candidate": 0.8},
+            "paper": {"max_position_margin_usdt": 2, "default_leverage": 5},
+            "strategy": {
+                "long_signal_execution": "normal",
+                "long_pullback_entry_enabled": True,
+                "long_pullback_min_score": 74,
+                "long_pullback_min_pct": 0.07,
+                "long_pullback_max_pct": 0.60,
+                "long_min_score": 70,
+                "short_min_score": 88,
+            },
+        },
+    )
+
+    assert decision.direction == "LONG"
+    assert decision.label == "LONG_CONTINUATION"
+    assert any("execution_score" in reason for reason in decision.reasons)
+    assert not any("pullback LONG" in reason for reason in decision.reasons)
+
+
 def test_cost_aware_breakdown_short_uses_real_sell_flow_not_inverted_long_signal():
     item = diagnostic(
         price_change_1m=-0.42,

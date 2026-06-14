@@ -395,7 +395,7 @@ def classify_direction(diagnostic: CandidateDiagnostics, config: dict) -> Direct
             warnings.append("paper experiment: executing long-continuation signal as contrarian SHORT after 1m pullback")
         return DirectionDecision("SHORT_INVERSE_LONG_SIGNAL", "SHORT", reasons, warnings, execution_score=long_execution_score)
 
-    if not inverse_long_signal and not long_pullback_enabled and all(long_conditions):
+    if not inverse_long_signal and all(long_conditions):
         reasons.extend([f"execution_score {long_execution_score} >= long_min_score {long_min_score}", *long_reasons])
         warnings.extend(long_warnings)
         if high_conviction_long and not long_blockers["volume_confirmed"]:
