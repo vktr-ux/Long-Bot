@@ -35,15 +35,37 @@ def tp1_touched(position: dict, price: float) -> bool:
     return price <= tp1
 
 
+def mfe_move_pct(position: dict) -> float:
+    notional = float(position.get("notional_usdt") or 0)
+    if notional <= 0:
+        entry = float(position.get("entry_price") or 0)
+        qty = float(position.get("qty") or 0)
+        notional = abs(entry * qty)
+    if notional <= 0:
+        return 0.0
+    return float(position.get("mfe_usdt") or 0) / notional * 100
+
+
 def evaluate_position(position: dict, price: float, timestamp_ms: int, config: dict) -> PositionAction:
     details = json.loads(position.get("details_json") or "{}")
     paper_cfg = config.get("paper", {})
     runtime_settings = details.get("settings_json") or details.get("runtime_settings") or {}
-    exit_settings = runtime_settings.get("exit", {}) if isinstance(runtime_settings, dict) else {}
+    config_exit_settings = config.get("exit", {})
+    runtime_exit_settings = runtime_settings.get("exit", {}) if isinstance(runtime_settings, dict) else {}
+    exit_settings = {**config_exit_settings, **runtime_exit_settings}
     direction = position["direction"].upper()
     opened_at = int(position["opened_at_ms"])
     age_seconds = max(0, (timestamp_ms - opened_at) / 1000)
     move_pct = favorable_move_pct(position, price)
+    profit_guard_enabled = bool(exit_settings.get("profit_guard_enabled", paper_cfg.get("profit_guard_enabled", True)))
+    max_move_pct = max(float(details.get("max_favorable_move_pct", move_pct)), move_pct, mfe_move_pct(position))
+    details_dirty = False
+    if profit_guard_enabled and details.get("max_favorable_move_pct") != max_move_pct:
+        details["max_favorable_move_pct"] = max_move_pct
+        details_dirty = True
+    if profit_guard_enabled and move_pct > 0 and not details.get("profit_started_ms"):
+        details["profit_started_ms"] = timestamp_ms
+        details_dirty = True
 
     if stop_touched(position, price):
         initial_stop = float(position["initial_sl_price"])
@@ -63,7 +85,37 @@ def evaluate_position(position: dict, price: float, timestamp_ms: int, config: d
         details["be_plus_armed"] = True
         updates["current_sl_price"] = float(details.get("be_plus_price", position["current_sl_price"]))
         updates["details_json"] = json.dumps(details)
-        return PositionAction("PARTIAL_CLOSE", "TP1_PARTIAL", float(exit_settings.get("tp1_close_fraction", paper_cfg.get("tp1_close_fraction", 0.5))), updates)
+        close_fraction = float(exit_settings.get("tp1_close_fraction", paper_cfg.get("tp1_close_fraction", 0.5)))
+        if close_fraction >= 0.999:
+            return PositionAction("CLOSE", "SCALP_TAKE_PROFIT", 1.0, updates)
+        return PositionAction("PARTIAL_CLOSE", "TP1_PARTIAL", close_fraction, updates)
+
+    if profit_guard_enabled and not details.get("tp1_done"):
+        guard_trigger_pct = float(exit_settings.get("profit_guard_trigger_pct", paper_cfg.get("profit_guard_trigger_pct", 0.30)))
+        guard_floor_pct = float(exit_settings.get("profit_guard_floor_pct", paper_cfg.get("profit_guard_floor_pct", 0.08)))
+        guard_min_age = float(exit_settings.get("profit_guard_min_age_seconds", paper_cfg.get("profit_guard_min_age_seconds", 20)))
+        if max_move_pct >= guard_trigger_pct:
+            if not details.get("profit_guard_armed"):
+                details["profit_guard_armed"] = True
+                details_dirty = True
+            if age_seconds >= guard_min_age and move_pct <= guard_floor_pct:
+                updates["details_json"] = json.dumps(details)
+                return PositionAction("CLOSE", "PROFIT_GIVEBACK_EXIT", 1.0, updates)
+
+        small_time_enabled = bool(exit_settings.get("small_profit_time_exit_enabled", paper_cfg.get("small_profit_time_exit_enabled", True)))
+        profit_started_ms = int(details.get("profit_started_ms") or 0)
+        positive_age_seconds = max(0, (timestamp_ms - profit_started_ms) / 1000) if profit_started_ms else 0
+        small_exit_seconds = float(exit_settings.get("small_profit_time_exit_seconds", paper_cfg.get("small_profit_time_exit_seconds", 30)))
+        small_exit_min_pct = float(exit_settings.get("small_profit_time_exit_min_pct", paper_cfg.get("small_profit_time_exit_min_pct", 0.25)))
+        if (
+            small_time_enabled
+            and small_exit_seconds > 0
+            and max_move_pct >= guard_trigger_pct
+            and positive_age_seconds >= small_exit_seconds
+            and move_pct >= small_exit_min_pct
+        ):
+            updates["details_json"] = json.dumps(details)
+            return PositionAction("CLOSE", "SMALL_PROFIT_TIME_EXIT", 1.0, updates)
 
     be_enabled = bool(exit_settings.get("breakeven_plus_enabled", paper_cfg.get("breakeven_plus_enabled", True)))
     be_extra = float(exit_settings.get("breakeven_plus_trigger_extra_pct", paper_cfg.get("breakeven_plus_trigger_extra_pct", 0.15)))
@@ -103,4 +155,6 @@ def evaluate_position(position: dict, price: float, timestamp_ms: int, config: d
         details["be_plus_armed"] = details.get("be_plus_armed", False)
         updates["details_json"] = json.dumps(details)
         return PositionAction("UPDATE", "MANAGE", 0.0, updates)
+    if details_dirty:
+        return PositionAction("UPDATE", "MANAGE", 0.0, {"details_json": json.dumps(details)})
     return PositionAction("HOLD", "NO_ACTION", 0.0)

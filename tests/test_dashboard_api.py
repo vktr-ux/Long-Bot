@@ -26,6 +26,7 @@ web:
     app = create_app(str(config_path))
     store = app.state.store
     account_id = store.ensure_paper_account(starting_balance_usdt=20)
+    active = store.get_active_runtime_settings()
     store.insert_paper_position(
         {
             "account_id": account_id,
@@ -80,6 +81,8 @@ web:
             "duration_seconds": 1,
             "exit_reason": "TRAILING_STOP",
             "strategy_version": "paper_scalper_v1",
+            "strategy_config_version": active["version"],
+            "settings_hash": active["settings_hash"],
         }
     )
     client = TestClient(app)
@@ -100,7 +103,11 @@ web:
     assert settings["active_settings_version"] == 1
     summary = client.get("/api/summary", headers=headers).json()
     assert summary["active_settings_version"] == 1
-    assert summary["pnl_by_settings_version"]["legacy"]["trades"] == 1
+    assert summary["pnl_by_settings_version"]["1"]["trades"] == 1
+    impact = client.get("/api/impact", headers=headers).json()
+    assert impact["versions"][0]["version"] == "1"
+    assert impact["versions"][0]["stats"]["trades"] == 1
+    assert impact["versions"][0]["trades"][0]["symbol"] == "AAAUSDT"
     store.close()
 
 
@@ -132,4 +139,6 @@ web:
     applied = client.post("/api/settings/apply", headers=headers, json={"settings": settings, "comment": "test"}).json()
     assert applied["version"] == 2
     assert applied["settings"]["risk"]["max_open_positions"] == 4
+    assert applied["account_reset_queued"] is True
     assert client.get("/api/settings/history", headers=headers).json()["versions"][0]["version"] == 2
+    assert client.app.state.store.get_bot_state("pending_account_reset")["settings_version"] == 2

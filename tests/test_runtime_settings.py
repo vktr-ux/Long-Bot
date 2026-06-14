@@ -54,6 +54,23 @@ def test_runtime_settings_apply_increments_version_and_audit(tmp_path):
     store.close()
 
 
+def test_reset_paper_account_keeps_history_but_resets_budget(tmp_path):
+    store = SQLiteStore(tmp_path / "paper.sqlite3")
+    account_id = store.ensure_paper_account(starting_balance_usdt=20)
+    store.update_paper_account_totals(account_id, realized_delta=-3, fee_delta=0.5, slippage_delta=0.4)
+
+    store.reset_paper_account(account_id, 20)
+
+    account = store.get_paper_account(account_id)
+    assert account["start_balance_usdt"] == 20
+    assert account["cash_balance_usdt"] == 20
+    assert account["equity_usdt"] == 20
+    assert account["realized_pnl_usdt"] == 0
+    assert account["total_fees_usdt"] == 0
+    assert account["total_slippage_usdt"] == 0
+    store.close()
+
+
 def test_runtime_settings_db_override_applies_to_config(tmp_path):
     config = load_config("config.paper.yaml")
     config["app"]["database_path"] = str(tmp_path / "paper.sqlite3")

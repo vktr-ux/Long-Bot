@@ -314,17 +314,18 @@ def base_position():
 
 
 def test_breakeven_plus_waits_for_net_cost_threshold():
-    action = evaluate_position(base_position(), 100.40, 2_000, {"paper": {"time_stop_seconds": 180, "max_hold_seconds": 600}})
+    cfg = {"paper": {"time_stop_seconds": 180, "max_hold_seconds": 600}, "exit": {"profit_guard_enabled": False}}
+    action = evaluate_position(base_position(), 100.40, 2_000, cfg)
     assert action.action == "HOLD"
 
-    action = evaluate_position(base_position(), 100.55, 2_000, {"paper": {"time_stop_seconds": 180, "max_hold_seconds": 600}})
+    action = evaluate_position(base_position(), 100.55, 2_000, cfg)
     assert action.action == "HOLD"
 
     after_tp1 = base_position()
     details = json.loads(after_tp1["details_json"])
     details["tp1_done"] = True
     after_tp1["details_json"] = json.dumps(details)
-    action = evaluate_position(after_tp1, 100.55, 2_000, {"paper": {"time_stop_seconds": 180, "max_hold_seconds": 600}})
+    action = evaluate_position(after_tp1, 100.55, 2_000, cfg)
     assert action.action == "UPDATE"
     assert action.updates["current_sl_price"] == 100.5
 
@@ -344,16 +345,85 @@ def test_tp1_partial_and_trailing_state():
     assert action.updates["current_sl_price"] > 101
 
 
+def test_tp1_can_close_full_position_for_scalp_mode():
+    action = evaluate_position(
+        base_position(),
+        101.1,
+        2_000,
+        {"exit": {"tp1_close_fraction": 1.0}, "paper": {"time_stop_seconds": 180, "max_hold_seconds": 600}},
+    )
+
+    assert action.action == "CLOSE"
+    assert action.reason == "SCALP_TAKE_PROFIT"
+    assert action.close_fraction == 1.0
+
+
+def test_profit_guard_closes_giveback_before_full_stop():
+    position = base_position()
+    details = json.loads(position["details_json"])
+    details["profit_started_ms"] = 1_000
+    position["details_json"] = json.dumps(details)
+    position["notional_usdt"] = 100
+    position["mfe_usdt"] = 0.5
+
+    action = evaluate_position(
+        position,
+        100.05,
+        35_000,
+        {
+            "exit": {
+                "profit_guard_enabled": True,
+                "profit_guard_trigger_pct": 0.30,
+                "profit_guard_floor_pct": 0.08,
+                "profit_guard_min_age_seconds": 20,
+            },
+            "paper": {"time_stop_seconds": 180, "max_hold_seconds": 600},
+        },
+    )
+
+    assert action.action == "CLOSE"
+    assert action.reason == "PROFIT_GIVEBACK_EXIT"
+
+
+def test_small_profit_time_exit_cashes_slow_positive_scalp():
+    position = base_position()
+    details = json.loads(position["details_json"])
+    details["profit_started_ms"] = 1_000
+    position["details_json"] = json.dumps(details)
+    position["notional_usdt"] = 100
+    position["mfe_usdt"] = 0.35
+
+    action = evaluate_position(
+        position,
+        100.30,
+        35_000,
+        {
+            "exit": {
+                "profit_guard_enabled": True,
+                "profit_guard_trigger_pct": 0.30,
+                "profit_guard_floor_pct": 0.08,
+                "small_profit_time_exit_enabled": True,
+                "small_profit_time_exit_seconds": 30,
+                "small_profit_time_exit_min_pct": 0.25,
+            },
+            "paper": {"time_stop_seconds": 180, "max_hold_seconds": 600},
+        },
+    )
+
+    assert action.action == "CLOSE"
+    assert action.reason == "SMALL_PROFIT_TIME_EXIT"
+
+
 def test_time_stop_holds_when_trade_has_progress():
     position = base_position()
     position["notional_usdt"] = 100
     position["mfe_usdt"] = 0.5
-    action = evaluate_position(position, 100.30, 300_000, {"paper": {"time_stop_seconds": 90, "max_hold_seconds": 600}})
+    action = evaluate_position(position, 100.30, 300_000, {"paper": {"time_stop_seconds": 90, "max_hold_seconds": 600}, "exit": {"profit_guard_enabled": False}})
     assert action.action == "HOLD"
 
     stale = base_position()
     stale["notional_usdt"] = 100
     stale["mfe_usdt"] = 0.01
-    action = evaluate_position(stale, 99.95, 300_000, {"paper": {"time_stop_seconds": 90, "max_hold_seconds": 600}})
+    action = evaluate_position(stale, 99.95, 300_000, {"paper": {"time_stop_seconds": 90, "max_hold_seconds": 600}, "exit": {"profit_guard_enabled": False}})
     assert action.action == "CLOSE"
     assert action.reason == "TIME_STOP"

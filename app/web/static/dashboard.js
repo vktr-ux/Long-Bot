@@ -75,7 +75,6 @@ function renderMetrics(summary) {
     <p>Avg win/loss: <strong>${money(summary.avg_win_usdt)} / ${money(summary.avg_loss_usdt)}</strong></p>
     <p>Stop / BE+ / trailing: <strong>${summary.stopout_count} / ${summary.breakeven_plus_count} / ${summary.trailing_count}</strong></p>
   `;
-  renderImpact(summary.pnl_by_settings_version || {});
 }
 
 function table(target, headers, rows) {
@@ -123,13 +122,74 @@ function renderSignals(rows) {
     </tr>`));
 }
 
-function renderImpact(byVersion) {
-  const rows = Object.entries(byVersion).sort(([a], [b]) => Number(b) - Number(a)).map(([version, row]) => `
+function formatTime(value) {
+  return value ? new Date(value).toLocaleString() : "-";
+}
+
+function renderImpactReasonRows(rows = []) {
+  if (!rows.length) return `<p class="muted">No exit breakdown yet</p>`;
+  return `
+    <table class="mini-table">
+      <thead><tr><th>Reason</th><th>Trades</th><th>Win</th><th>Net</th><th>Gross</th><th>Fees</th><th>Slip</th></tr></thead>
+      <tbody>${rows.map((row) => `
+        <tr>
+          <td>${escapeHtml(row.exit_reason)}</td><td>${row.trades}</td><td>${pct(row.win_rate_pct)}</td>
+          <td class="${cls(row.net_pnl_usdt)}">${money(row.net_pnl_usdt)}</td>
+          <td class="${cls(row.gross_pnl_usdt)}">${money(row.gross_pnl_usdt)}</td>
+          <td>${money(row.fees_usdt)}</td><td>${money(row.slippage_usdt)}</td>
+        </tr>
+      `).join("")}</tbody>
+    </table>
+  `;
+}
+
+function renderImpactTradeRows(rows = []) {
+  if (!rows.length) return `<p class="muted">No trades in this version</p>`;
+  return `
+    <table class="mini-table">
+      <thead><tr><th>Time</th><th>Symbol</th><th>Side</th><th>Net</th><th>ROI</th><th>MFE</th><th>MAE</th><th>Reason</th><th>Duration</th></tr></thead>
+      <tbody>${rows.map((row) => `
+        <tr>
+          <td>${formatTime(row.exit_time_ms)}</td><td>${escapeHtml(row.symbol)}</td><td>${escapeHtml(row.direction)}</td>
+          <td class="${cls(row.net_pnl_usdt)}">${money(row.net_pnl_usdt)}</td><td>${pct(row.roi_pct)}</td>
+          <td>${money(row.mfe_usdt)}</td><td>${money(row.mae_usdt)}</td><td>${escapeHtml(row.exit_reason)}</td>
+          <td>${Number(row.duration_seconds || 0).toFixed(0)}s</td>
+        </tr>
+      `).join("")}</tbody>
+    </table>
+  `;
+}
+
+function renderImpact(payload) {
+  const versions = Array.isArray(payload?.versions) ? payload.versions : [];
+  const rows = versions.map((row) => {
+    const stats = row.stats || {};
+    const title = row.version === "legacy" ? "legacy" : `v${row.version}`;
+    const active = row.is_active ? `<span class="pill">active</span>` : "";
+    return `
     <tr>
-      <td>${version}</td><td>${row.trades}</td><td class="${cls(row.net_pnl_usdt)}">${money(row.net_pnl_usdt)}</td>
-      <td>${pct(row.win_rate_pct)}</td><td>${row.stop_loss_count}</td><td>${row.breakeven_plus_count}</td><td>${row.trailing_count}</td>
-    </tr>`);
-  table("impact-table", ["Settings", "Trades", "Net PnL", "Win Rate", "Stop", "BE+", "Trailing"], rows);
+      <td>${title} ${active}</td>
+      <td>${formatTime(row.created_at_ms)}</td>
+      <td>${escapeHtml(row.comment || "")}</td>
+      <td>${stats.trades || 0}</td>
+      <td class="${cls(stats.net_pnl_usdt)}">${money(stats.net_pnl_usdt)}</td>
+      <td>${pct(stats.win_rate_pct)}</td>
+      <td>${Number(stats.profit_factor || 0).toFixed(2)}</td>
+      <td>${money(stats.total_fees_usdt)}</td>
+      <td>
+        <details>
+          <summary>${escapeHtml(row.settings_hash_short || "")} ${formatTime(row.first_exit_time_ms)} - ${formatTime(row.last_exit_time_ms)}</summary>
+          <div class="impact-details">
+            <h3>Exit Breakdown</h3>
+            ${renderImpactReasonRows(row.by_exit_reason)}
+            <h3>Trades</h3>
+            ${renderImpactTradeRows(row.trades)}
+          </div>
+        </details>
+      </td>
+    </tr>`;
+  });
+  table("impact-table", ["Settings", "Created", "Comment", "Trades", "Net PnL", "Win Rate", "PF", "Fees", "Details"], rows);
 }
 
 const settingsHelp = [
@@ -229,7 +289,15 @@ const settingsHelp = [
   { group: "Выход", path: "exit.tp1_enabled", about: "Разрешить частичную фиксацию первой цели.", values: "true/false." },
   { group: "Выход", path: "exit.tp1_trigger_pct_min", about: "Минимальное движение цены для TP1.", values: "0-100% и не выше tp1_trigger_pct_max." },
   { group: "Выход", path: "exit.tp1_trigger_pct_max", about: "Максимальное движение цены для TP1.", values: "0-100% и не ниже tp1_trigger_pct_min." },
+  { group: "Выход", path: "exit.tp1_extra_after_cost_pct", about: "Минимальный запас движения сверх расчетной стоимости входа/выхода для TP1.", values: "0-100%. Ниже = ближе take profit." },
   { group: "Выход", path: "exit.tp1_close_fraction", about: "Какая доля позиции закрывается на TP1.", values: "Больше 0 и до 1.0. Например 0.5 = половина." },
+  { group: "Выход", path: "exit.profit_guard_enabled", about: "Включает защиту сделки, которая уже дала небольшой плюс, но начинает отдавать движение.", values: "true/false." },
+  { group: "Выход", path: "exit.profit_guard_trigger_pct", about: "С какого максимального движения в плюс считать, что сделку уже надо защищать.", values: "0-100% движения цены." },
+  { group: "Выход", path: "exit.profit_guard_floor_pct", about: "До какого текущего плюса можно откатиться после срабатывания защиты, прежде чем бот закроет позицию.", values: "0-100% движения цены." },
+  { group: "Выход", path: "exit.profit_guard_min_age_seconds", about: "Минимальный возраст позиции перед закрытием по отдаче прибыли.", values: "0 и выше секунд." },
+  { group: "Выход", path: "exit.small_profit_time_exit_enabled", about: "Разрешает закрывать всю позицию, если она достаточно долго держит небольшой плюс, но не дошла до TP.", values: "true/false." },
+  { group: "Выход", path: "exit.small_profit_time_exit_seconds", about: "Сколько секунд позиция должна быть в плюсе перед small-profit выходом.", values: "0 и выше секунд." },
+  { group: "Выход", path: "exit.small_profit_time_exit_min_pct", about: "Минимальный текущий плюс для small-profit выхода.", values: "0-100% движения цены." },
   { group: "Выход", path: "exit.trailing_enabled", about: "Разрешить trailing stop после движения в плюс.", values: "true/false." },
   { group: "Выход", path: "exit.trailing_start_pct_min", about: "Минимальное движение цены в плюс, после которого можно включать trailing.", values: "0-100%." },
   { group: "Выход", path: "exit.trailing_distance_pct_min", about: "Минимальная дистанция trailing stop.", values: "0-100% и не выше trailing_distance_pct_max." },
@@ -365,6 +433,7 @@ function renderSettings(payload, botStatus) {
     `<span class="pill">${payload.settings_hash_short}</span>`,
     `<span class="pill">${botStatus.paused ? "paused" : "running"}</span>`,
     `<span class="pill">open ${botStatus.open_positions}</span>`,
+    botStatus.pending_account_reset ? `<span class="pill warning">account reset pending</span>` : "",
     settingsEditorDirty ? `<span class="pill warning">unsaved editor changes</span>` : "",
   ].join("");
   if (!settingsEditorDirty) {
@@ -393,15 +462,17 @@ async function refreshSlow() {
   if (symbol) qs.set("symbol", symbol.toUpperCase());
   if (direction) qs.set("direction", direction);
   if (exitReason) qs.set("exit_reason", exitReason.toUpperCase());
-  const [trades, signals, tradingSettings, botStatus] = await Promise.all([
+  const [trades, signals, tradingSettings, botStatus, impact] = await Promise.all([
     api(`api/trades?${qs}`),
     api("api/signals"),
     api("api/settings/trading"),
     api("api/bot/status"),
+    api("api/impact"),
   ]);
   renderTrades(trades);
   renderSignals(signals);
   renderSettings(tradingSettings, botStatus);
+  renderImpact(impact);
 }
 
 document.querySelectorAll(".tab").forEach((button) => {

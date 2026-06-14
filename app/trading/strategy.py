@@ -132,9 +132,10 @@ def build_trade_plan(
     roundtrip_cost_usdt = notional * (risk.cost_pct / 100)
     min_profit_usdt = float(exit_cfg.get("min_net_profit_after_breakeven_usdt", paper_cfg.get("min_net_profit_after_breakeven_usdt", 0.02)))
     be_plus_move_pct = ((roundtrip_cost_usdt + min_profit_usdt) / notional * 100) if notional else 999
+    tp1_extra_after_cost_pct = float(exit_cfg.get("tp1_extra_after_cost_pct", paper_cfg.get("tp1_extra_after_cost_pct", 0.20)))
     tp1_trigger_pct = float(
         clamp(
-            max(float(exit_cfg.get("tp1_trigger_pct_min", 0.60)), be_plus_move_pct + 0.20),
+            max(float(exit_cfg.get("tp1_trigger_pct_min", 0.60)), be_plus_move_pct + tp1_extra_after_cost_pct),
             float(exit_cfg.get("tp1_trigger_pct_min", 0.60)),
             float(exit_cfg.get("tp1_trigger_pct_max", 1.20)),
         )

@@ -28,6 +28,7 @@ from app.utils.time import now_ms
 
 LOGGER = logging.getLogger(__name__)
 SCANNER_ATTENTION_STATE_KEY = "scanner_attention_state"
+PENDING_ACCOUNT_RESET_STATE_KEY = "pending_account_reset"
 
 
 def parse_args() -> argparse.Namespace:
@@ -357,6 +358,50 @@ async def process_paper_commands(connector, store: SQLiteStore, broker: PaperBro
     return closed_count
 
 
+async def process_pending_account_reset(connector, store: SQLiteStore, broker: PaperBroker, account_id: int, config: dict) -> tuple[bool, int]:
+    pending = store.get_bot_state(PENDING_ACCOUNT_RESET_STATE_KEY)
+    if not pending:
+        return False, 0
+    if not isinstance(pending, dict):
+        pending = {}
+    open_positions = store.get_open_positions(account_id)
+    if open_positions:
+        tickers = await open_position_tickers(connector, open_positions)
+        closed_count = 0
+        for position in open_positions:
+            ticker = tickers.get(position["symbol"].upper())
+            if ticker is None:
+                continue
+            trade_id = broker.close_position(int(position["id"]), ticker, "VERSION_RESET_CLOSE", 1.0)
+            if trade_id is not None:
+                closed_count += 1
+        store.record_bot_event(
+            "INFO",
+            "runner",
+            "version reset closing old positions",
+            {"pending": pending, "requested": len(open_positions), "closed": closed_count},
+        )
+        snapshot_equity(store, account_id)
+        return True, closed_count
+
+    starting_balance = float(pending.get("starting_balance_usdt") or config.get("paper", {}).get("starting_balance_usdt", 20.0))
+    store.reset_paper_account(account_id, starting_balance)
+    store.set_bot_state(POSITION_LIFECYCLE_STATE_KEY, {"positions": {}})
+    store.set_bot_state(PENDING_ACCOUNT_RESET_STATE_KEY, None)
+    store.record_bot_event(
+        "INFO",
+        "runner",
+        "paper account reset for settings version",
+        {
+            "settings_version": pending.get("settings_version"),
+            "settings_hash": pending.get("settings_hash"),
+            "starting_balance_usdt": starting_balance,
+        },
+    )
+    snapshot_equity(store, account_id)
+    return False, 0
+
+
 def snapshot_equity(store: SQLiteStore, account_id: int) -> None:
     account = store.get_paper_account(account_id)
     if not account:
@@ -410,6 +455,11 @@ async def run_cycle(connector, config: dict, store: SQLiteStore, account_id: int
     symbols_by_name = symbol_map(result.symbols)
     broker = PaperBroker(store, config, account_id)
     closed_count = await manage_open_positions(connector, store, broker, account_id, config)
+    reset_blocks_open, reset_closed = await process_pending_account_reset(connector, store, broker, account_id, config)
+    closed_count += reset_closed
+    if reset_blocks_open:
+        store.record_bot_event("INFO", "runner", "paper open skipped", {"reason": "account reset pending"})
+        return 0, closed_count
     if store.is_bot_paused():
         store.record_bot_event("INFO", "runner", "paper open skipped", {"reason": "bot paused"})
         snapshot_equity(store, account_id)

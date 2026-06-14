@@ -175,6 +175,36 @@ th {
   font-weight: 600;
 }
 
+details summary {
+  cursor: pointer;
+  color: var(--accent);
+}
+
+.impact-details {
+  display: grid;
+  gap: 10px;
+  min-width: 720px;
+  padding: 10px 0 2px;
+}
+
+.impact-details h3 {
+  margin: 0;
+  font-size: 13px;
+}
+
+.mini-table {
+  min-width: 680px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.mini-table th,
+.mini-table td {
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
 .section-head, .filters {
   display: flex;
   align-items: center;

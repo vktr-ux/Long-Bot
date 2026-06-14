@@ -703,6 +703,25 @@ class SQLiteStore:
         )
         self.conn.commit()
 
+    def reset_paper_account(self, account_id: int, starting_balance_usdt: float, unrealized_pnl: float = 0.0) -> None:
+        ts = now_ms()
+        equity = starting_balance_usdt + unrealized_pnl
+        self.conn.execute(
+            """
+            UPDATE paper_accounts
+            SET start_balance_usdt=?,
+                cash_balance_usdt=?,
+                equity_usdt=?,
+                realized_pnl_usdt=0,
+                total_fees_usdt=0,
+                total_slippage_usdt=0,
+                updated_at_ms=?
+            WHERE id=?
+            """,
+            (starting_balance_usdt, starting_balance_usdt, equity, ts, account_id),
+        )
+        self.conn.commit()
+
     def insert_trade_plan(
         self,
         *,

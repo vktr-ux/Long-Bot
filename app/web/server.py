@@ -77,6 +77,99 @@ def summarize_trades(trades: list[dict[str, Any]], start_balance: float) -> dict
     }
 
 
+def group_trades_by_exit_reason(trades: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    grouped: dict[str, dict[str, Any]] = {}
+    for trade in trades:
+        key = str(trade.get("exit_reason") or "UNKNOWN")
+        bucket = grouped.setdefault(
+            key,
+            {
+                "exit_reason": key,
+                "trades": 0,
+                "wins": 0,
+                "net_pnl_usdt": 0.0,
+                "gross_pnl_usdt": 0.0,
+                "fees_usdt": 0.0,
+                "slippage_usdt": 0.0,
+            },
+        )
+        bucket["trades"] += 1
+        bucket["wins"] += 1 if float(trade["net_pnl_usdt"]) > 0 else 0
+        bucket["net_pnl_usdt"] += float(trade["net_pnl_usdt"])
+        bucket["gross_pnl_usdt"] += float(trade["gross_pnl_usdt"])
+        bucket["fees_usdt"] += float(trade["fees_usdt"])
+        bucket["slippage_usdt"] += float(trade["slippage_usdt"])
+    for bucket in grouped.values():
+        bucket["win_rate_pct"] = (bucket["wins"] / bucket["trades"] * 100) if bucket["trades"] else 0
+    return sorted(grouped.values(), key=lambda row: float(row["net_pnl_usdt"]))
+
+
+def compact_trade_row(trade: dict[str, Any]) -> dict[str, Any]:
+    keys = [
+        "id",
+        "position_id",
+        "symbol",
+        "direction",
+        "entry_time_ms",
+        "exit_time_ms",
+        "duration_seconds",
+        "entry_price",
+        "exit_price",
+        "qty",
+        "gross_pnl_usdt",
+        "fees_usdt",
+        "slippage_usdt",
+        "net_pnl_usdt",
+        "roi_pct",
+        "mfe_usdt",
+        "mae_usdt",
+        "exit_reason",
+        "strategy_config_version",
+        "settings_hash",
+    ]
+    return {key: trade.get(key) for key in keys}
+
+
+def build_settings_impact(store: SQLiteStore, start_balance: float) -> list[dict[str, Any]]:
+    settings_rows = store.list_runtime_settings(limit=200)
+    settings_by_version = {str(row["version"]): row for row in settings_rows}
+    trades = enrich_trade_rows(store, store.list_trades(limit=50_000))
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for trade in trades:
+        key = str(trade.get("strategy_config_version") or "legacy")
+        grouped.setdefault(key, []).append(trade)
+
+    for version in settings_by_version:
+        grouped.setdefault(version, [])
+
+    impact: list[dict[str, Any]] = []
+    for version, version_trades in grouped.items():
+        settings_row = settings_by_version.get(version)
+        version_start_balance = start_balance
+        if settings_row:
+            version_start_balance = float(settings_row.get("settings", {}).get("risk", {}).get("starting_balance_usdt") or start_balance)
+        stats = summarize_trades(version_trades, version_start_balance)
+        first_exit = min((int(trade["exit_time_ms"]) for trade in version_trades), default=None)
+        last_exit = max((int(trade["exit_time_ms"]) for trade in version_trades), default=None)
+        impact.append(
+            {
+                "version": version,
+                "is_active": bool(settings_row and settings_row.get("is_active")),
+                "settings_hash": settings_row.get("settings_hash") if settings_row else None,
+                "settings_hash_short": str(settings_row.get("settings_hash") or "")[:12] if settings_row else None,
+                "created_at_ms": settings_row.get("created_at_ms") if settings_row else None,
+                "created_by": settings_row.get("created_by") if settings_row else None,
+                "comment": settings_row.get("comment") if settings_row else None,
+                "first_exit_time_ms": first_exit,
+                "last_exit_time_ms": last_exit,
+                "stats": stats,
+                "by_exit_reason": group_trades_by_exit_reason(version_trades),
+                "trades": [compact_trade_row(trade) for trade in sorted(version_trades, key=lambda row: int(row["exit_time_ms"]), reverse=True)],
+            }
+        )
+    return sorted(impact, key=lambda row: -1 if row["version"] == "legacy" else -int(row["version"]))
+
+
 def enrich_trade_rows(store: SQLiteStore, trades: list[dict[str, Any]]) -> list[dict[str, Any]]:
     enriched: list[dict[str, Any]] = []
     for trade in trades:
@@ -168,17 +261,23 @@ def create_app(config_path: str = "config.paper.yaml") -> FastAPI:
         to_ms = parse_ms(to)
         account = app.state.store.get_paper_account() or {}
         start_balance = float(account.get("start_balance_usdt") or config.get("paper", {}).get("starting_balance_usdt", 20.0))
-        trades = enrich_trade_rows(app.state.store, app.state.store.list_trades(from_ms=from_ms, to_ms=to_ms, limit=10_000))
-        equity = app.state.store.list_equity_snapshots(from_ms=from_ms, to_ms=to_ms, limit=10_000)
-        stats = summarize_trades(trades, start_balance)
         active = app.state.store.get_active_runtime_settings() or {}
+        active_hash = str(active.get("settings_hash") or "")
+        all_trades = enrich_trade_rows(app.state.store, app.state.store.list_trades(from_ms=from_ms, to_ms=to_ms, limit=10_000))
+        trades = [trade for trade in all_trades if not active_hash or str(trade.get("settings_hash") or "") == active_hash]
+        equity_from_ms = from_ms
+        if equity_from_ms is None and active.get("created_at_ms"):
+            equity_from_ms = int(active["created_at_ms"])
+        equity = app.state.store.list_equity_snapshots(from_ms=equity_from_ms, to_ms=to_ms, limit=10_000)
+        stats = summarize_trades(trades, start_balance)
         now = int(datetime.now(tz=timezone.utc).timestamp() * 1000)
         day_start = now - 24 * 60 * 60 * 1000
-        today_trades = enrich_trade_rows(app.state.store, app.state.store.list_trades(from_ms=day_start, limit=10_000))
+        all_today_trades = enrich_trade_rows(app.state.store, app.state.store.list_trades(from_ms=day_start, limit=10_000))
+        today_trades = [trade for trade in all_today_trades if not active_hash or str(trade.get("settings_hash") or "") == active_hash]
         by_symbol: dict[str, float] = {}
         by_direction: dict[str, float] = {}
         by_settings: dict[str, dict[str, Any]] = {}
-        for trade in trades:
+        for trade in all_trades:
             by_symbol[trade["symbol"]] = by_symbol.get(trade["symbol"], 0.0) + float(trade["net_pnl_usdt"])
             by_direction[trade["direction"]] = by_direction.get(trade["direction"], 0.0) + float(trade["net_pnl_usdt"])
             version_key = str(trade.get("strategy_config_version") or "legacy")
@@ -209,6 +308,12 @@ def create_app(config_path: str = "config.paper.yaml") -> FastAPI:
             "worst_10_trades": sorted(trades, key=lambda trade: float(trade["net_pnl_usdt"]))[:10],
             **stats,
         }
+
+    @app.get("/api/impact", dependencies=[Depends(auth)])
+    def api_impact() -> dict[str, Any]:
+        account = app.state.store.get_paper_account() or {}
+        start_balance = float(account.get("start_balance_usdt") or config.get("paper", {}).get("starting_balance_usdt", 20.0))
+        return {"versions": build_settings_impact(app.state.store, start_balance)}
 
     @app.get("/api/open-positions", dependencies=[Depends(auth)])
     def api_open_positions() -> list[dict[str, Any]]:
@@ -325,12 +430,30 @@ def create_app(config_path: str = "config.paper.yaml") -> FastAPI:
             )
         )
         app.state.store.record_bot_event("INFO", "web", "SETTINGS_APPLIED", {"version": row["version"], "hash": row["settings_hash"]})
+        app.state.store.set_bot_state(
+            "pending_account_reset",
+            {
+                "settings_version": row["version"],
+                "settings_hash": row["settings_hash"],
+                "starting_balance_usdt": settings.risk.starting_balance_usdt,
+                "requested_at_ms": now_ms(),
+                "changed_by": changed_by,
+                "comment": comment,
+            },
+        )
+        app.state.store.record_bot_event(
+            "INFO",
+            "web",
+            "PAPER_ACCOUNT_RESET_QUEUED",
+            {"version": row["version"], "starting_balance_usdt": settings.risk.starting_balance_usdt},
+        )
         return {
             "ok": True,
             "version": row["version"],
             "settings_hash": row["settings_hash"],
             "settings_hash_short": str(row["settings_hash"])[:12],
             "settings": row["settings"],
+            "account_reset_queued": True,
         }
 
     @app.put("/api/settings/trading", dependencies=[Depends(auth)])
@@ -389,6 +512,7 @@ def create_app(config_path: str = "config.paper.yaml") -> FastAPI:
         active = app.state.store.get_active_runtime_settings()
         latest_snapshot = app.state.store.latest_snapshot_timestamp_ms()
         last_tick = app.state.store.get_bot_state("last_scanner_tick_ms")
+        pending_reset = app.state.store.get_bot_state("pending_account_reset")
         return {
             "paused": app.state.store.is_bot_paused(),
             "runner_online": bool(last_tick and int(datetime.now(tz=timezone.utc).timestamp() * 1000) - int(last_tick) < 120_000),
@@ -398,6 +522,7 @@ def create_app(config_path: str = "config.paper.yaml") -> FastAPI:
             "active_settings_hash": active.get("settings_hash") if active else None,
             "open_positions": len(app.state.store.get_open_positions()),
             "database_path": app.state.config.get("app", {}).get("database_path"),
+            "pending_account_reset": pending_reset if pending_reset else None,
             "uptime_seconds": max(0, int((int(datetime.now(tz=timezone.utc).timestamp() * 1000) - app.state.started_at_ms) / 1000)),
             "recent_errors": [
                 dict(row)
