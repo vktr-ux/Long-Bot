@@ -59,7 +59,7 @@ function metric(label, value, klass = "") {
 
 function renderMetrics(summary) {
   document.getElementById("metrics").innerHTML = [
-    metric("Balance / 20 USDT", `${money(summary.current_equity_usdt)} / ${money(summary.starting_balance_usdt, 2)}`, cls(summary.current_equity_usdt - summary.starting_balance_usdt)),
+    metric("Equity / Start", `${money(summary.current_equity_usdt)} / ${money(summary.starting_balance_usdt, 2)}`, cls(summary.current_equity_usdt - summary.starting_balance_usdt)),
     metric("Net PnL", money(summary.net_pnl_usdt), cls(summary.net_pnl_usdt)),
     metric("ROI", pct(summary.roi_pct), cls(summary.roi_pct)),
     metric("Today PnL", money(summary.today_pnl_usdt), cls(summary.today_pnl_usdt)),

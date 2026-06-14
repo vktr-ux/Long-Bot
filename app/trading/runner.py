@@ -238,6 +238,34 @@ def cooldown_reason(store: SQLiteStore, symbol: str, direction: str, config: dic
     return None
 
 
+def new_entries_block_reason(store: SQLiteStore, config: dict) -> str | None:
+    pending_reset = store.get_bot_state(PENDING_ACCOUNT_RESET_STATE_KEY)
+    if pending_reset:
+        return "account reset pending"
+
+    active = store.get_active_runtime_settings()
+    if not active:
+        return None
+
+    runtime_meta = config.get("runtime_settings", {}) if isinstance(config.get("runtime_settings", {}), dict) else {}
+    current_version = runtime_meta.get("version")
+    active_version = active.get("version")
+    if current_version is not None and active_version is not None:
+        try:
+            if int(active_version) != int(current_version):
+                return f"settings changed mid-cycle: active v{active_version}, runner v{current_version}"
+        except (TypeError, ValueError):
+            if str(active_version) != str(current_version):
+                return f"settings changed mid-cycle: active v{active_version}, runner v{current_version}"
+
+    current_hash = str(runtime_meta.get("hash") or "")
+    active_hash = str(active.get("settings_hash") or "")
+    if current_hash and active_hash and current_hash != active_hash:
+        return "settings changed mid-cycle: active settings hash differs from runner config"
+
+    return None
+
+
 def persist_plan(store: SQLiteStore, plan: TradePlan, status: str, signal_id: int | None = None) -> int:
     risk = plan.risk.to_dict()
     risk.update(
@@ -423,6 +451,17 @@ def snapshot_equity(store: SQLiteStore, account_id: int) -> None:
 
 
 async def run_cycle(connector, config: dict, store: SQLiteStore, account_id: int) -> tuple[int, int]:
+    broker = PaperBroker(store, config, account_id)
+    reset_blocks_open, reset_closed = await process_pending_account_reset(connector, store, broker, account_id, config)
+    if reset_blocks_open:
+        store.record_bot_event("INFO", "runner", "paper open skipped", {"reason": "account reset pending"})
+        return 0, reset_closed
+    entry_block = new_entries_block_reason(store, config)
+    if entry_block:
+        store.record_bot_event("INFO", "runner", "paper open skipped", {"reason": entry_block})
+        snapshot_equity(store, account_id)
+        return 0, reset_closed
+
     engine = ScanEngine(connector, config)
     attention_state = store.get_bot_state(SCANNER_ATTENTION_STATE_KEY, {})
     cycle_now_ms = now_ms()
@@ -454,12 +493,17 @@ async def run_cycle(connector, config: dict, store: SQLiteStore, account_id: int
         store.insert_signal(signal, sent_to_telegram=False)
 
     symbols_by_name = symbol_map(result.symbols)
-    broker = PaperBroker(store, config, account_id)
     closed_count = await manage_open_positions(connector, store, broker, account_id, config)
+    closed_count += reset_closed
     reset_blocks_open, reset_closed = await process_pending_account_reset(connector, store, broker, account_id, config)
     closed_count += reset_closed
     if reset_blocks_open:
         store.record_bot_event("INFO", "runner", "paper open skipped", {"reason": "account reset pending"})
+        return 0, closed_count
+    entry_block = new_entries_block_reason(store, config)
+    if entry_block:
+        store.record_bot_event("INFO", "runner", "paper open skipped", {"reason": entry_block})
+        snapshot_equity(store, account_id)
         return 0, closed_count
     if store.is_bot_paused():
         store.record_bot_event("INFO", "runner", "paper open skipped", {"reason": "bot paused"})
@@ -508,6 +552,10 @@ async def run_cycle(connector, config: dict, store: SQLiteStore, account_id: int
                 plan.warnings.append(trigger_reason)
             persist_plan(store, plan, "waiting_entry")
             continue
+        entry_block = new_entries_block_reason(store, config)
+        if entry_block:
+            store.record_bot_event("INFO", "runner", "paper open skipped", {"reason": entry_block, "symbol": diagnostic.symbol, "direction": decision.direction})
+            break
         trade_plan_id = persist_plan(store, plan, "planned")
         broker.open_position(plan, diagnostic.ticker, trade_plan_id=trade_plan_id)
         open_positions.append({"symbol": diagnostic.symbol, "direction": decision.direction})

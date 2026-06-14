@@ -107,11 +107,12 @@ def group_trades_by_exit_reason(trades: list[dict[str, Any]]) -> list[dict[str, 
 def matches_active_settings(trade: dict[str, Any], active: dict[str, Any] | None) -> bool:
     if not active:
         return True
-    active_hash = str(active.get("settings_hash") or "")
-    if active_hash:
-        return str(trade.get("settings_hash") or "") == active_hash
     active_version = str(active.get("version") or "")
-    return not active_version or str(trade.get("strategy_config_version") or "") == active_version
+    trade_version = str(trade.get("strategy_config_version") or "")
+    if active_version and trade_version:
+        return trade_version == active_version
+    active_hash = str(active.get("settings_hash") or "")
+    return not active_hash or str(trade.get("settings_hash") or "") == active_hash
 
 
 def compact_trade_row(trade: dict[str, Any]) -> dict[str, Any]:
@@ -286,9 +287,10 @@ def create_app(config_path: str = "config.paper.yaml") -> FastAPI:
         by_symbol: dict[str, float] = {}
         by_direction: dict[str, float] = {}
         by_settings: dict[str, dict[str, Any]] = {}
-        for trade in all_trades:
+        for trade in trades:
             by_symbol[trade["symbol"]] = by_symbol.get(trade["symbol"], 0.0) + float(trade["net_pnl_usdt"])
             by_direction[trade["direction"]] = by_direction.get(trade["direction"], 0.0) + float(trade["net_pnl_usdt"])
+        for trade in all_trades:
             version_key = str(trade.get("strategy_config_version") or "legacy")
             bucket = by_settings.setdefault(version_key, {"trades": 0, "net_pnl_usdt": 0.0, "wins": 0, "losses": 0, "stop_loss_count": 0, "breakeven_plus_count": 0, "trailing_count": 0})
             bucket["trades"] += 1

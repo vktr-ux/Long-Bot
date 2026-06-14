@@ -181,10 +181,81 @@ web:
     summary = client.get("/api/summary", headers=headers).json()
     assert summary["trades"] == 1
     assert summary["net_pnl_usdt"] == 0.2
+    assert summary["pnl_by_symbol"] == {"NEWUSDT": 0.2}
+    assert summary["pnl_by_direction"] == {"LONG": 0.2}
     impact = client.get("/api/impact", headers=headers).json()
     versions = {row["version"]: row for row in impact["versions"]}
     assert versions["1"]["stats"]["trades"] == 1
     assert versions["2"]["stats"]["trades"] == 1
+    store.close()
+
+
+def test_dashboard_active_scope_prefers_version_when_settings_hash_is_reused(tmp_path, monkeypatch):
+    monkeypatch.setenv("DASHBOARD_TOKEN", "test-token")
+    db_path = tmp_path / "paper.sqlite3"
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        f"""
+app:
+  exchange: binance
+  database_path: "{db_path.as_posix()}"
+  log_level: INFO
+  profile: normal
+paper:
+  starting_balance_usdt: 20
+web:
+  dashboard_token_env: DASHBOARD_TOKEN
+""",
+        encoding="utf-8",
+    )
+    app = create_app(str(config_path))
+    store = app.state.store
+    account_id = store.ensure_paper_account(starting_balance_usdt=20)
+    version_1 = store.get_active_runtime_settings()
+    version_2 = store.apply_runtime_settings(version_1["settings"], version_1["settings_hash"], comment="same hash reset")
+
+    def insert_trade(symbol: str, net: float, version: dict, exit_time_ms: int) -> None:
+        store.insert_paper_trade(
+            {
+                "account_id": account_id,
+                "position_id": exit_time_ms,
+                "symbol": symbol,
+                "direction": "SHORT",
+                "entry_time_ms": exit_time_ms - 1,
+                "exit_time_ms": exit_time_ms,
+                "entry_price": 100,
+                "exit_price": 99,
+                "qty": 1,
+                "notional_usdt": 100,
+                "leverage": 5,
+                "gross_pnl_usdt": net,
+                "fees_usdt": 0,
+                "slippage_usdt": 0,
+                "funding_usdt": 0,
+                "net_pnl_usdt": net,
+                "roi_pct": net,
+                "mfe_usdt": net,
+                "mae_usdt": 0,
+                "duration_seconds": 1,
+                "exit_reason": "TAKE_PROFIT",
+                "strategy_version": "paper_scalper_v1",
+                "strategy_config_version": version["version"],
+                "settings_hash": version["settings_hash"],
+            }
+        )
+
+    assert version_1["settings_hash"] == version_2["settings_hash"]
+    insert_trade("OLDHASHUSDT", -0.1, version_1, 10)
+    insert_trade("NEWHASHUSDT", 0.2, version_2, 20)
+
+    client = TestClient(app)
+    headers = {"X-Dashboard-Token": "test-token"}
+    active_rows = client.get("/api/trades", headers=headers).json()
+    assert [row["symbol"] for row in active_rows] == ["NEWHASHUSDT"]
+    summary = client.get("/api/summary", headers=headers).json()
+    assert summary["trades"] == 1
+    assert summary["net_pnl_usdt"] == 0.2
+    assert summary["pnl_by_symbol"] == {"NEWHASHUSDT": 0.2}
     store.close()
 
 

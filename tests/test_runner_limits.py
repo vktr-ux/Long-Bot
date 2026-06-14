@@ -1,17 +1,27 @@
 from types import SimpleNamespace
 
 from app.storage.models import TickerSnapshot
-from app.trading.runner import account_can_open, cooldown_reason, entry_trigger_status
+from app.trading.runner import account_can_open, cooldown_reason, entry_trigger_status, new_entries_block_reason
 from app.utils.time import now_ms
 
 
 class FakeStore:
-    def __init__(self, open_positions, trades):
+    def __init__(self, open_positions, trades, *, pending_reset=None, active_settings=None):
         self._open_positions = open_positions
         self._trades = trades
+        self._pending_reset = pending_reset
+        self._active_settings = active_settings
 
     def get_open_positions(self, account_id):
         return self._open_positions
+
+    def get_bot_state(self, key, default=None):
+        if key == "pending_account_reset":
+            return self._pending_reset
+        return default
+
+    def get_active_runtime_settings(self):
+        return self._active_settings
 
     def list_trades(self, from_ms=None, to_ms=None, symbol=None, direction=None, exit_reason=None, limit=1000):
         rows = self._trades
@@ -179,3 +189,19 @@ def test_entry_trigger_confirmation_blocks_early_and_late_chase_entries():
     ready, reason = entry_trigger_status(plan, TickerSnapshot(now_ms(), "binance", "AAAUSDT", 101.7, ask_price=101.7), cfg)
     assert not ready
     assert "overrun" in reason
+
+
+def test_new_entries_are_blocked_during_pending_reset_or_stale_runtime_config():
+    config = {"runtime_settings": {"version": 24, "hash": "runner-hash"}}
+
+    pending_store = FakeStore(open_positions=[], trades=[], pending_reset={"settings_version": 25})
+    assert new_entries_block_reason(pending_store, config) == "account reset pending"
+
+    stale_version_store = FakeStore(open_positions=[], trades=[], active_settings={"version": 25, "settings_hash": "runner-hash"})
+    assert new_entries_block_reason(stale_version_store, config).startswith("settings changed mid-cycle")
+
+    stale_hash_store = FakeStore(open_positions=[], trades=[], active_settings={"version": 24, "settings_hash": "active-hash"})
+    assert new_entries_block_reason(stale_hash_store, config).startswith("settings changed mid-cycle")
+
+    current_store = FakeStore(open_positions=[], trades=[], active_settings={"version": 24, "settings_hash": "runner-hash"})
+    assert new_entries_block_reason(current_store, config) is None
