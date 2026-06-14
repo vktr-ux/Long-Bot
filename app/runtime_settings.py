@@ -71,6 +71,20 @@ class StrategySettings(BaseModel):
     avoid_shorting_strong_momentum: bool = True
     inverse_short_immediate_entry: bool = False
     inverse_short_relaxed_conditions: bool = False
+    long_pullback_entry_enabled: bool = False
+    long_pullback_min_score: int = Field(default=74, ge=0, le=100)
+    long_pullback_min_pct: float = Field(default=0.07, ge=0, le=10)
+    long_pullback_max_pct: float = Field(default=0.60, ge=0, le=10)
+    short_breakdown_entry_enabled: bool = False
+    short_breakdown_min_score: int = Field(default=68, ge=0, le=100)
+    short_breakdown_min_1m_pct: float = Field(default=0.18, ge=0, le=10)
+    short_breakdown_min_5m_pct: float = Field(default=0.35, ge=0, le=20)
+
+    @model_validator(mode="after")
+    def ordered_strategy_ranges(self) -> "StrategySettings":
+        if self.long_pullback_min_pct > self.long_pullback_max_pct:
+            raise ValueError("long_pullback_min_pct must be <= long_pullback_max_pct")
+        return self
 
 
 class RiskSettings(BaseModel):

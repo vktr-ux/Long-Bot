@@ -387,6 +387,7 @@ async def process_pending_account_reset(connector, store: SQLiteStore, broker: P
     starting_balance = float(pending.get("starting_balance_usdt") or config.get("paper", {}).get("starting_balance_usdt", 20.0))
     store.reset_paper_account(account_id, starting_balance)
     store.set_bot_state(POSITION_LIFECYCLE_STATE_KEY, {"positions": {}})
+    store.set_bot_state(SCANNER_ATTENTION_STATE_KEY, {})
     store.set_bot_state(PENDING_ACCOUNT_RESET_STATE_KEY, None)
     store.record_bot_event(
         "INFO",

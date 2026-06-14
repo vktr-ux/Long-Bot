@@ -38,6 +38,10 @@ def _add_score(reasons: list[str], score: int, points: int, reason: str) -> int:
     return score + points
 
 
+def _between(value: float, low: float, high: float) -> bool:
+    return low <= value <= high
+
+
 def _long_execution_score(diagnostic: CandidateDiagnostics, config: dict) -> tuple[int, list[str], list[str], dict[str, bool]]:
     metrics = diagnostic.metrics
     ticker = diagnostic.ticker
@@ -244,6 +248,14 @@ def classify_direction(diagnostic: CandidateDiagnostics, config: dict) -> Direct
     short_min_score = int(strategy_cfg.get("short_min_score", 88))
     long_high_conviction_score = int(strategy_cfg.get("long_high_conviction_score", 82))
     short_strict = bool(strategy_cfg.get("short_strict_mode", True))
+    long_pullback_enabled = bool(strategy_cfg.get("long_pullback_entry_enabled", False))
+    long_pullback_min_score = int(strategy_cfg.get("long_pullback_min_score", 74))
+    long_pullback_min_pct = float(strategy_cfg.get("long_pullback_min_pct", 0.07))
+    long_pullback_max_pct = float(strategy_cfg.get("long_pullback_max_pct", 0.60))
+    short_breakdown_enabled = bool(strategy_cfg.get("short_breakdown_entry_enabled", False))
+    short_breakdown_min_score = int(strategy_cfg.get("short_breakdown_min_score", 68))
+    short_breakdown_min_1m_pct = float(strategy_cfg.get("short_breakdown_min_1m_pct", 0.18))
+    short_breakdown_min_5m_pct = float(strategy_cfg.get("short_breakdown_min_5m_pct", 0.35))
 
     spread_limit = float(config.get("filters", {}).get("max_spread_pct", 0.20))
     absolute_spread_skip = float(config.get("filters", {}).get("max_spread_pct_absolute_skip", 0.35))
@@ -298,6 +310,54 @@ def classify_direction(diagnostic: CandidateDiagnostics, config: dict) -> Direct
         and long_blockers["buy_flow_ok"]
         and long_blockers["not_failed_breakout"]
     )
+    price_1m = metrics.price_change_1m or 0.0
+    price_5m = metrics.price_change_5m or 0.0
+    price_15m = metrics.price_change_15m or 0.0
+    price_1h = metrics.price_change_1h or 0.0
+    price_4h = metrics.price_change_4h or 0.0
+    btc_15m = metrics.btc_change_15m
+    btc_1h = metrics.btc_change_1h
+    taker_ratio = metrics.taker_buy_sell_ratio
+    oi_15m = metrics.oi_change_15m_pct
+    funding = metrics.funding_rate
+
+    long_pullback_quality = (
+        long_blockers["volume_confirmed"]
+        or breakout_state in {"FRESH_BREAKOUT", "CONFIRMED_BREAKOUT", "RETEST_HELD"}
+        or price_5m >= 1.2
+        or high_conviction_long
+    )
+    htf_long_ok = price_1h >= -0.6 and price_4h >= -2.5 and (btc_15m is None or btc_15m >= -0.45) and (btc_1h is None or btc_1h >= -0.90)
+    pullback_depth = abs(price_1m) if price_1m < 0 else 0.0
+    long_pullback_ok = (
+        long_pullback_enabled
+        and long_enabled
+        and not inverse_long_signal
+        and long_execution_score >= long_pullback_min_score
+        and _between(pullback_depth, long_pullback_min_pct, long_pullback_max_pct)
+        and price_5m >= 0.10
+        and price_15m >= float(config.get("filters", {}).get("min_price_change_15m_pct_for_candidate", 0.8))
+        and long_pullback_quality
+        and htf_long_ok
+        and long_blockers["buy_flow_ok"]
+        and long_blockers["oi_ok"]
+        and long_blockers["funding_ok"]
+        and long_blockers["not_failed_breakout"]
+        and long_blockers["not_hard_chase"]
+        and long_blockers["not_immediate_dump"]
+    )
+    if long_pullback_ok:
+        reasons.extend(
+            [
+                f"pullback LONG: execution_score {long_execution_score} >= {long_pullback_min_score}",
+                f"controlled 1m pullback {price_1m:+.2f}% inside positive 5m/15m context",
+                *long_reasons,
+            ]
+        )
+        warnings.extend(long_warnings)
+        warnings.append("paper experiment: cost-aware pullback LONG, not inverse short")
+        return DirectionDecision("LONG_CONTINUATION", "LONG", reasons, warnings, execution_score=long_execution_score)
+
     inverse_short_pullback_confirmed = (metrics.price_change_1m or 0) <= -inverse_short_pullback_pct
     inverse_short_strict_ok = inverse_long_signal and short_enabled and all(long_signal_conditions) and long_execution_score >= inverse_long_min_score
     inverse_short_relaxed_ok = (
@@ -335,7 +395,7 @@ def classify_direction(diagnostic: CandidateDiagnostics, config: dict) -> Direct
             warnings.append("paper experiment: executing long-continuation signal as contrarian SHORT after 1m pullback")
         return DirectionDecision("SHORT_INVERSE_LONG_SIGNAL", "SHORT", reasons, warnings, execution_score=long_execution_score)
 
-    if not inverse_long_signal and all(long_conditions):
+    if not inverse_long_signal and not long_pullback_enabled and all(long_conditions):
         reasons.extend([f"execution_score {long_execution_score} >= long_min_score {long_min_score}", *long_reasons])
         warnings.extend(long_warnings)
         if high_conviction_long and not long_blockers["volume_confirmed"]:
@@ -348,6 +408,35 @@ def classify_direction(diagnostic: CandidateDiagnostics, config: dict) -> Direct
         return DirectionDecision("NO_TRADE_CONFLICT", "NO_TRADE", reasons, warnings, execution_score=long_execution_score)
 
     short_execution_score, short_reasons, short_warnings, short_blockers = _short_execution_score(diagnostic)
+    htf_short_ok = price_1h <= 1.2 and price_4h <= 6.0 and (btc_15m is None or btc_15m <= 0.60) and (btc_1h is None or btc_1h <= 1.20)
+    short_breakdown_ok = (
+        short_breakdown_enabled
+        and short_enabled
+        and short_execution_score >= short_breakdown_min_score
+        and price_1m <= -short_breakdown_min_1m_pct
+        and price_5m <= -short_breakdown_min_5m_pct
+        and htf_short_ok
+        and (
+            breakout_state in {"FAILED_BREAKOUT", "OVEREXTENDED_AFTER_BREAKOUT"}
+            or (taker_ratio is not None and taker_ratio <= 0.88)
+            or (oi_15m is not None and oi_15m <= -2)
+            or (funding is not None and funding >= 0.0005)
+        )
+        and short_blockers["sell_pressure"]
+        and short_blockers["not_continuation"]
+    )
+    if short_breakdown_ok:
+        reasons.extend(
+            [
+                f"breakdown SHORT: execution_score {short_execution_score} >= {short_breakdown_min_score}",
+                f"1m/5m momentum down {price_1m:+.2f}%/{price_5m:+.2f}%",
+                *short_reasons,
+            ]
+        )
+        warnings.extend(short_warnings)
+        warnings.append("paper experiment: cost-aware breakdown SHORT")
+        return DirectionDecision("SHORT_BLOWOFF_REVERSAL", "SHORT", reasons, warnings, execution_score=short_execution_score)
+
     short_score_ok = diagnostic.score >= short_min_score and short_execution_score >= short_min_score
     short_conditions = [
         short_enabled,

@@ -186,6 +186,79 @@ def test_relaxed_inverse_short_accepts_high_score_after_pullback_with_soft_long_
     assert any("relaxed inverse-short" in warning for warning in relaxed.warnings)
 
 
+def test_cost_aware_pullback_long_enters_after_controlled_dip_in_strong_context():
+    item = diagnostic(
+        price_change_1m=-0.12,
+        price_change_5m=1.30,
+        price_change_15m=1.45,
+        price_change_1h=2.4,
+        price_change_4h=4.0,
+        volume_spike_15m=0.9,
+        turnover_spike_15m=0.8,
+        taker_buy_sell_ratio=1.31,
+        oi_change_15m_pct=0.8,
+        funding_rate=0.0001,
+        btc_change_15m=0.05,
+        btc_change_1h=0.2,
+    )
+    item.breakout.state = "FRESH_BREAKOUT"
+    decision = classify_direction(
+        item,
+        {
+            "filters": {"max_spread_pct": 0.20, "min_volume_spike_for_candidate": 1.4, "min_price_change_15m_pct_for_candidate": 0.8},
+            "paper": {"max_position_margin_usdt": 2, "default_leverage": 5},
+            "strategy": {
+                "long_signal_execution": "normal",
+                "long_pullback_entry_enabled": True,
+                "long_pullback_min_score": 74,
+                "long_pullback_min_pct": 0.07,
+                "long_pullback_max_pct": 0.60,
+                "long_min_score": 64,
+                "short_min_score": 88,
+            },
+        },
+    )
+    assert decision.direction == "LONG"
+    assert decision.label == "LONG_CONTINUATION"
+    assert any("pullback LONG" in reason for reason in decision.reasons)
+
+
+def test_cost_aware_breakdown_short_uses_real_sell_flow_not_inverted_long_signal():
+    item = diagnostic(
+        price_change_1m=-0.42,
+        price_change_5m=-0.82,
+        price_change_15m=-0.35,
+        price_change_1h=0.4,
+        price_change_4h=2.0,
+        taker_buy_sell_ratio=0.82,
+        oi_change_15m_pct=-2.6,
+        funding_rate=0.0007,
+        btc_change_15m=-0.1,
+        btc_change_1h=0.1,
+    )
+    item.breakout.state = "FAILED_BREAKOUT"
+    item.score = 52
+    decision = classify_direction(
+        item,
+        {
+            "filters": {"max_spread_pct": 0.20, "min_volume_spike_for_candidate": 1.4, "min_price_change_15m_pct_for_candidate": 0.8},
+            "paper": {"max_position_margin_usdt": 2, "default_leverage": 5},
+            "strategy": {
+                "long_signal_execution": "normal",
+                "short_breakdown_entry_enabled": True,
+                "short_breakdown_min_score": 68,
+                "short_breakdown_min_1m_pct": 0.18,
+                "short_breakdown_min_5m_pct": 0.35,
+                "short_min_score": 88,
+                "short_enabled": True,
+            },
+        },
+    )
+    assert decision.direction == "SHORT"
+    assert decision.label == "SHORT_BLOWOFF_REVERSAL"
+    assert any("breakdown SHORT" in reason for reason in decision.reasons)
+
+
 def test_classifier_allows_high_conviction_continuation_without_volume_spike():
     item = diagnostic(
         price_change_1m=0.2,
