@@ -1,7 +1,9 @@
 import json
 
 from app.storage.models import BreakoutContext, CandidateDiagnostics, Candle, Metrics, SetupPlan, TickerSnapshot
+from app.storage.db import SQLiteStore
 from app.trading.classifier import DirectionDecision, classify_direction
+from app.trading.paper import PaperBroker
 from app.trading.position_manager import evaluate_position
 from app.trading.strategy import build_trade_plan
 
@@ -564,6 +566,96 @@ def test_trade_plan_can_enforce_min_reward_risk_ratio():
     assert capped is not None
     assert capped.status == "rejected"
     assert "reward/risk" in (capped.risk.reason or "")
+
+
+def test_paper_broker_executes_controlled_scale_in_leg(tmp_path):
+    item = diagnostic(price_change_5m=1.4, price_change_15m=2.8, volume_spike_15m=2.5)
+    decision = DirectionDecision("LONG_CONTINUATION", "LONG", ["scale test"], [], execution_score=90)
+    config = {
+        "entry": {
+            "mode": "confirmation_ladder",
+            "require_trigger_confirmation": False,
+            "legs_enabled": True,
+            "allow_average_down": True,
+            "scale_in_enabled": True,
+            "scale_in_step_pct": 0.30,
+            "scale_in_max_leg_overrun_pct": 0.35,
+            "leg_weights": [0.50, 0.30, 0.20],
+            "max_legs": 3,
+        },
+        "paper": {
+            "max_position_margin_usdt": 12,
+            "max_account_fraction_as_margin": 0.5,
+            "default_leverage": 8,
+            "max_leverage": 10,
+            "max_loss_per_trade_usdt": 0.9,
+            "initial_sl_pct_min": 0.8,
+            "initial_sl_pct_max": 1.6,
+            "stop_loss_extra_buffer_pct": 0.5,
+            "fallback_min_notional_usdt": 5,
+            "fallback_step_size": 0.001,
+            "fee_rate_taker": 0.0004,
+            "entry_slippage_bps": 3,
+            "exit_slippage_bps": 5,
+            "margin_mode": "isolated",
+            "maintenance_margin_rate": 0.01,
+            "maintenance_amount_usdt": 0,
+        },
+        "exit": {"tp1_trigger_pct_min": 1.2, "tp1_trigger_pct_max": 2.8, "tp1_close_fraction": 1.0},
+        "runtime_settings": {"version": 99, "hash": "scale-hash"},
+    }
+    plan = build_trade_plan(item, decision, symbol_info=None, balance_usdt=100, config=config)
+    assert plan is not None
+    assert plan.entry_grid[1]["trigger_price"] < plan.entry_grid[0]["trigger_price"]
+
+    store = SQLiteStore(tmp_path / "paper.sqlite3")
+    account_id = store.ensure_paper_account(starting_balance_usdt=100)
+    broker = PaperBroker(store, config, account_id)
+    position_id = broker.open_position(plan, item.ticker, trade_plan_id=None)
+    first = store.get_position(position_id)
+    assert first is not None
+    assert 0 < first["qty"] < plan.risk.qty
+    first_entry = float(first["entry_price"])
+
+    second_trigger = float(plan.entry_grid[1]["trigger_price"])
+    second_ticker = TickerSnapshot(
+        timestamp_ms=2,
+        exchange="binance",
+        symbol=item.symbol,
+        last_price=second_trigger,
+        bid_price=second_trigger * 0.9999,
+        ask_price=second_trigger,
+        spread_pct=0.02,
+    )
+    assert broker.add_scale_in_leg(first, second_ticker) is True
+    scaled = store.get_position(position_id)
+    assert scaled is not None
+    assert float(scaled["qty"]) > float(first["qty"])
+    assert float(scaled["qty"]) <= plan.risk.qty
+    assert float(scaled["entry_price"]) < first_entry
+    assert float(scaled["tp1_price"]) > float(scaled["entry_price"])
+    fills = store.get_position_fills(position_id)
+    entry_fills = [fill for fill in fills if fill["side"] == "BUY"]
+    assert len(entry_fills) == 2
+    details = json.loads(scaled["details_json"])
+    assert details["scale_in"]["filled_legs"] == [1, 2]
+    assert details["entry_grid"][1]["status"] == "filled"
+    exit_ticker = TickerSnapshot(
+        timestamp_ms=3,
+        exchange="binance",
+        symbol=item.symbol,
+        last_price=float(scaled["tp1_price"]),
+        bid_price=float(scaled["tp1_price"]),
+        ask_price=float(scaled["tp1_price"]) * 1.0001,
+        spread_pct=0.02,
+    )
+    trade_id = broker.close_position(position_id, exit_ticker, "SCALP_TAKE_PROFIT", 1.0)
+    assert trade_id is not None
+    trade = store.list_trades(limit=1)[0]
+    assert trade["qty"] == scaled["qty"]
+    assert trade["entry_price"] == scaled["entry_price"]
+    assert trade["net_pnl_usdt"] > 0
+    store.close()
 
 
 def test_pullback_long_can_use_current_ask_trigger_without_disabling_confirmation():

@@ -5,6 +5,12 @@ import json
 from app.storage.db import SQLiteStore
 from app.storage.models import TickerSnapshot
 from app.trading.pnl import closed_trade_from_fills, funding_cost_usdt, funding_event_count, gross_pnl, simulate_fill
+from app.trading.risk import (
+    estimate_isolated_liquidation_price,
+    floor_to_step,
+    maintenance_amount_usdt,
+    maintenance_margin_rate,
+)
 from app.trading.strategy import TradePlan
 from app.utils.time import now_ms
 
@@ -47,6 +53,19 @@ def _to_int(value) -> int | None:
         return None
 
 
+def _runtime_entry_settings(details: dict, fallback_config: dict) -> dict:
+    settings = details.get("settings_json") or details.get("runtime_settings") or {}
+    if isinstance(settings, dict) and isinstance(settings.get("entry"), dict):
+        return {**fallback_config.get("entry", {}), **settings["entry"]}
+    return fallback_config.get("entry", {})
+
+
+def _leg_qty(total_qty: float, fraction: float, step_size: float, remaining_qty: float, *, last_leg: bool) -> float:
+    if last_leg:
+        return floor_to_step(remaining_qty, step_size)
+    return floor_to_step(min(total_qty * fraction, remaining_qty), step_size)
+
+
 def estimate_position_funding(position: dict, ticker: TickerSnapshot, closed_at_ms: int, details: dict) -> tuple[float, dict]:
     funding_details = dict(details.get("funding") or {})
     entry_next_funding_ms = _to_int(funding_details.get("entry_next_funding_time_ms"))
@@ -84,9 +103,25 @@ class PaperBroker:
         ts = now_ms()
         side = _entry_side(plan.direction)
         reference_price = _entry_reference_price(plan.direction, ticker, plan.entry_price)
+        entry_settings = plan.settings_json.get("entry", {}) if isinstance(plan.settings_json, dict) else self.config.get("entry", {})
+        entry_grid = [dict(leg) for leg in plan.entry_grid]
+        scale_in_enabled = (
+            bool(entry_settings.get("scale_in_enabled", False))
+            and bool(entry_settings.get("legs_enabled", True))
+            and bool(entry_settings.get("allow_average_down", False))
+            and len(entry_grid) > 1
+        )
+        entry_qty = plan.risk.qty
+        if scale_in_enabled:
+            first_fraction = float(entry_grid[0].get("fraction") or 1.0)
+            entry_qty = _leg_qty(plan.risk.qty, first_fraction, plan.risk.step_size, plan.risk.qty, last_leg=len(entry_grid) == 1)
+            first_notional = entry_qty * reference_price
+            if entry_qty <= 0 or first_notional < plan.risk.min_notional * 1.02:
+                scale_in_enabled = False
+                entry_qty = plan.risk.qty
         fill = simulate_fill(
             side=side,
-            qty=plan.risk.qty,
+            qty=entry_qty,
             reference_price=reference_price,
             role="ENTRY",
             fee_rate=float(self.paper_cfg.get("fee_rate_taker", 0.0004)),
@@ -98,6 +133,24 @@ class PaperBroker:
         details["be_plus_armed"] = False
         details["strategy_config_version"] = plan.strategy_config_version
         details["settings_hash"] = plan.settings_hash
+        if scale_in_enabled:
+            entry_grid[0].update(
+                {
+                    "status": "filled",
+                    "filled_at_ms": ts,
+                    "fill_qty": fill.qty,
+                    "fill_price": fill.price,
+                    "fill_notional_usdt": fill.notional_usdt,
+                }
+            )
+        details["entry_grid"] = entry_grid
+        details["scale_in"] = {
+            "enabled": scale_in_enabled,
+            "planned_total_qty": plan.risk.qty,
+            "planned_total_notional_usdt": plan.risk.notional_usdt,
+            "filled_legs": [1] if scale_in_enabled else [leg.get("leg") for leg in entry_grid],
+            "max_legs": len(entry_grid),
+        }
         details["funding"] = {
             "entry_rate": ticker.funding_rate,
             "entry_next_funding_time_ms": ticker.next_funding_time_ms,
@@ -174,6 +227,186 @@ class PaperBroker:
             self.store.update_trade_plan_status(trade_plan_id, "opened")
         self.store.record_bot_event("INFO", "paper", f"opened paper {plan.direction} {plan.symbol}", {"position_id": position_id})
         return position_id
+
+    def add_scale_in_leg(self, position: dict, ticker: TickerSnapshot) -> bool:
+        details = json.loads(position.get("details_json") or "{}")
+        scale_in = details.get("scale_in") or {}
+        if not scale_in.get("enabled"):
+            return False
+        if details.get("tp1_done") or details.get("be_plus_armed") or details.get("profit_guard_armed") or int(position.get("trailing_active") or 0):
+            return False
+        entry_grid = [dict(leg) for leg in details.get("entry_grid") or []]
+        if len(entry_grid) <= 1:
+            return False
+        filled_legs = {int(leg) for leg in scale_in.get("filled_legs") or []}
+        next_leg = None
+        for leg in sorted(entry_grid, key=lambda item: int(item.get("leg") or 0)):
+            leg_number = int(leg.get("leg") or 0)
+            if leg_number > 1 and leg_number not in filled_legs and leg.get("status") != "filled":
+                next_leg = leg
+                break
+        if not next_leg:
+            return False
+
+        direction = str(position["direction"]).upper()
+        reference_price = _entry_reference_price(direction, ticker, float(position["entry_price"]))
+        trigger = float(next_leg.get("trigger_price") or 0)
+        if reference_price <= 0 or trigger <= 0:
+            return False
+        entry_settings = _runtime_entry_settings(details, self.config)
+        max_overrun_pct = float(entry_settings.get("scale_in_max_leg_overrun_pct", 0.35))
+        stop = float(position["current_sl_price"])
+        if direction == "LONG":
+            if reference_price > trigger or reference_price <= stop:
+                return False
+            overrun_pct = (trigger - reference_price) / trigger * 100
+        else:
+            if reference_price < trigger or reference_price >= stop:
+                return False
+            overrun_pct = (reference_price - trigger) / trigger * 100
+        if overrun_pct > max_overrun_pct:
+            return False
+
+        planned_total_qty = float(scale_in.get("planned_total_qty") or (details.get("risk") or {}).get("qty") or position.get("qty") or 0)
+        current_qty = float(position.get("qty") or 0)
+        remaining_qty = max(0.0, planned_total_qty - current_qty)
+        if remaining_qty <= 0:
+            return False
+        remaining_leg_numbers = [
+            int(leg.get("leg") or 0)
+            for leg in entry_grid
+            if int(leg.get("leg") or 0) not in filled_legs and leg.get("status") != "filled"
+        ]
+        is_last_leg = len(remaining_leg_numbers) <= 1
+        step_size = float((details.get("risk") or {}).get("step_size") or 0)
+        fraction = float(next_leg.get("fraction") or 0)
+        qty = _leg_qty(planned_total_qty, fraction, step_size, remaining_qty, last_leg=is_last_leg)
+        if qty <= 0:
+            return False
+        min_notional = float((details.get("risk") or {}).get("min_notional") or self.paper_cfg.get("fallback_min_notional_usdt", 5.0))
+        if qty * reference_price < min_notional * 1.02:
+            return False
+
+        ts = now_ms()
+        side = _entry_side(direction)
+        fill = simulate_fill(
+            side=side,
+            qty=qty,
+            reference_price=reference_price,
+            role="ENTRY",
+            fee_rate=float(self.paper_cfg.get("fee_rate_taker", 0.0004)),
+            slippage_bps=float(self.paper_cfg.get("entry_slippage_bps", 3)),
+            fill_source="binance_public_book_paper_scale_in",
+        )
+        old_entry = float(position["entry_price"])
+        old_qty = current_qty
+        new_qty = old_qty + fill.qty
+        new_entry = ((old_entry * old_qty) + (fill.price * fill.qty)) / new_qty
+        notional = abs(new_entry * new_qty)
+        leverage = float(position.get("leverage") or 1)
+        margin = notional / leverage if leverage else notional
+        high = max(float(position.get("high_watermark") or old_entry), reference_price, fill.price)
+        low = min(float(position.get("low_watermark") or old_entry), reference_price, fill.price)
+        if direction == "LONG":
+            mfe = max(0.0, (high - new_entry) * new_qty)
+            mae = min(0.0, (low - new_entry) * new_qty)
+            tp1_price = new_entry * (1 + float(details.get("tp1_trigger_pct", 0)) / 100)
+            be_plus_price = new_entry * (1 + float(details.get("be_plus_move_pct", 0)) / 100)
+        else:
+            mfe = max(0.0, (new_entry - low) * new_qty)
+            mae = min(0.0, (new_entry - high) * new_qty)
+            tp1_price = new_entry * (1 - float(details.get("tp1_trigger_pct", 0)) / 100)
+            be_plus_price = new_entry * (1 - float(details.get("be_plus_move_pct", 0)) / 100)
+
+        leg_number = int(next_leg.get("leg") or 0)
+        next_leg.update(
+            {
+                "status": "filled",
+                "filled_at_ms": ts,
+                "fill_qty": fill.qty,
+                "fill_price": fill.price,
+                "fill_notional_usdt": fill.notional_usdt,
+                "overrun_pct": overrun_pct,
+            }
+        )
+        entry_grid = [next_leg if int(leg.get("leg") or 0) == leg_number else leg for leg in entry_grid]
+        filled_legs.add(leg_number)
+        scale_in["filled_legs"] = sorted(filled_legs)
+        scale_in["filled_qty"] = new_qty
+        scale_in["filled_fraction"] = (new_qty / planned_total_qty) if planned_total_qty else 1.0
+        details["scale_in"] = scale_in
+        details["entry_grid"] = entry_grid
+        details["be_plus_price"] = be_plus_price
+        details["average_entry_price"] = new_entry
+        if details.get("margin_mode") == "isolated":
+            details["liquidation_price"] = estimate_isolated_liquidation_price(
+                direction=direction,
+                entry_price=new_entry,
+                qty=new_qty,
+                isolated_margin_usdt=margin,
+                maintenance_margin_rate_value=maintenance_margin_rate(self.paper_cfg),
+                maintenance_amount_usdt_value=maintenance_amount_usdt(self.paper_cfg),
+            )
+
+        order_id = self.store.insert_paper_order(
+            account_id=self.account_id,
+            trade_plan_id=position.get("trade_plan_id"),
+            position_id=int(position["id"]),
+            symbol=position["symbol"],
+            side=side,
+            order_type="MARKET",
+            role=f"SCALE_IN_{leg_number}",
+            qty=fill.qty,
+            price=fill.price,
+            trigger_price=trigger,
+            status="FILLED",
+            timestamp_ms=ts,
+        )
+        self.store.insert_paper_fill(
+            account_id=self.account_id,
+            position_id=int(position["id"]),
+            order_id=order_id,
+            symbol=position["symbol"],
+            side=side,
+            qty=fill.qty,
+            price=fill.price,
+            notional_usdt=fill.notional_usdt,
+            fee_usdt=fill.fee_usdt,
+            slippage_usdt=fill.slippage_usdt,
+            liquidity_side=fill.liquidity_side,
+            fill_source=fill.fill_source,
+            filled_at_ms=ts,
+        )
+        self.store.update_paper_position(
+            int(position["id"]),
+            {
+                "qty": new_qty,
+                "entry_price": new_entry,
+                "notional_usdt": notional,
+                "margin_usdt": margin,
+                "tp1_price": tp1_price,
+                "high_watermark": high,
+                "low_watermark": low,
+                "mfe_usdt": mfe,
+                "mae_usdt": mae,
+                "realized_pnl_usdt": float(position.get("realized_pnl_usdt") or 0) - (fill.fee_usdt + fill.slippage_usdt),
+                "fees_usdt": float(position.get("fees_usdt") or 0) + fill.fee_usdt,
+                "details_json": json.dumps(details),
+            },
+        )
+        self.store.update_paper_account_totals(
+            self.account_id,
+            realized_delta=-(fill.fee_usdt + fill.slippage_usdt),
+            fee_delta=fill.fee_usdt,
+            slippage_delta=fill.slippage_usdt,
+        )
+        self.store.record_bot_event(
+            "INFO",
+            "paper",
+            f"scale-in leg {leg_number} {position['direction']} {position['symbol']}",
+            {"position_id": int(position["id"]), "leg": leg_number, "qty": fill.qty, "price": fill.price},
+        )
+        return True
 
     def mark_position(self, position: dict, ticker: TickerSnapshot) -> dict:
         direction = position["direction"].upper()

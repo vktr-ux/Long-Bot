@@ -351,6 +351,9 @@ async def manage_open_positions(connector, store: SQLiteStore, broker: PaperBrok
             trade_id = broker.close_position(int(position["id"]), ticker, action.reason, 1.0)
             if trade_id is not None:
                 closed_count += 1
+        else:
+            if broker.add_scale_in_leg(marked, ticker):
+                marked = store.get_position(int(position["id"])) or marked
     if lifecycle_events:
         store.insert_position_lifecycle_events(lifecycle_events)
     store.set_bot_state(POSITION_LIFECYCLE_STATE_KEY, lifecycle_state)

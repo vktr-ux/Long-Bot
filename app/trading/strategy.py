@@ -139,15 +139,35 @@ def build_trade_plan(
     if not entry_cfg.get("legs_enabled", True):
         leg_weights = [1.0]
     leg_weights = leg_weights[:max_legs]
+    scale_in_enabled = (
+        bool(entry_cfg.get("scale_in_enabled", False))
+        and bool(entry_cfg.get("legs_enabled", True))
+        and bool(entry_cfg.get("allow_average_down", False))
+        and len(leg_weights) > 1
+    )
+    scale_in_step_pct = float(entry_cfg.get("scale_in_step_pct", 0.30))
     entry_grid = []
     for index, fraction in enumerate(leg_weights, start=1):
+        trigger_price = ladder_trigger
+        if scale_in_enabled and index > 1:
+            offset_pct = scale_in_step_pct * (index - 1)
+            if direction == "LONG":
+                trigger_price = ladder_trigger * (1 - offset_pct / 100)
+            else:
+                trigger_price = ladder_trigger * (1 + offset_pct / 100)
         entry_grid.append(
             {
                 "leg": index,
                 "fraction": fraction,
                 "notional_usdt": round(notional * fraction, 8),
-                "trigger_price": ladder_trigger,
-                "condition": "confirmed continuation ladder; never average down" if index > 1 else "confirmed breakout or current price through ladder trigger",
+                "trigger_price": trigger_price,
+                "condition": (
+                    f"controlled scale-in leg {index} at {scale_in_step_pct * (index - 1):.2f}% adverse move"
+                    if scale_in_enabled and index > 1
+                    else "confirmed continuation ladder; never average down"
+                    if index > 1
+                    else "confirmed breakout or current price through ladder trigger"
+                ),
             }
         )
     if direction == "LONG":
