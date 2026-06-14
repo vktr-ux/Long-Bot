@@ -59,14 +59,17 @@ class FilterSettings(BaseModel):
 
 class StrategySettings(BaseModel):
     direction_mode: Literal["both", "long_only", "short_only", "auto"] = "both"
+    long_signal_execution: Literal["normal", "inverse_short"] = "normal"
     long_enabled: bool = True
     short_enabled: bool = True
     long_min_score: int = Field(default=64, ge=0, le=100)
+    inverse_long_min_score: int = Field(default=64, ge=0, le=100)
     short_min_score: int = Field(default=88, ge=0, le=100)
     long_high_conviction_score: int = Field(default=82, ge=0, le=100)
     short_strict_mode: bool = True
     avoid_late_chase: bool = True
     avoid_shorting_strong_momentum: bool = True
+    inverse_short_immediate_entry: bool = False
 
 
 class RiskSettings(BaseModel):

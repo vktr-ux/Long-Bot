@@ -79,6 +79,74 @@ def test_classifier_uses_execution_score_for_continuation_not_legacy_alert_score
     assert decision.label == "LONG_CONTINUATION"
 
 
+def test_classifier_can_execute_long_signal_as_inverse_short():
+    item = diagnostic(
+        price_change_1m=0.25,
+        price_change_5m=1.4,
+        price_change_15m=2.8,
+        volume_spike_15m=2.4,
+        taker_buy_sell_ratio=1.24,
+        oi_change_15m_pct=2.0,
+    )
+    decision = classify_direction(
+        item,
+        {
+            "filters": {"max_spread_pct": 0.20, "min_volume_spike_for_candidate": 1.4, "min_price_change_15m_pct_for_candidate": 0.8},
+            "paper": {"max_position_margin_usdt": 2, "default_leverage": 5},
+            "strategy": {
+                "long_signal_execution": "inverse_short",
+                "inverse_short_immediate_entry": True,
+                "long_min_score": 64,
+                "inverse_long_min_score": 64,
+                "short_min_score": 88,
+                "short_enabled": True,
+                "long_enabled": True,
+            },
+        },
+    )
+
+    assert decision.direction == "SHORT"
+    assert decision.label == "SHORT_INVERSE_LONG_SIGNAL"
+    assert decision.execution_score >= 64
+    assert any("inverse mode" in reason for reason in decision.reasons)
+
+
+def test_inverse_short_waits_for_1m_pullback_when_immediate_entry_disabled():
+    item = diagnostic(
+        price_change_1m=0.10,
+        price_change_5m=1.4,
+        price_change_15m=2.8,
+        volume_spike_15m=2.4,
+        taker_buy_sell_ratio=1.24,
+        oi_change_15m_pct=2.0,
+    )
+    cfg = {
+        "filters": {"max_spread_pct": 0.20, "min_volume_spike_for_candidate": 1.4, "min_price_change_15m_pct_for_candidate": 0.8},
+        "entry": {"pullback_confirm_pct": 0.15},
+        "paper": {"max_position_margin_usdt": 2, "default_leverage": 5},
+        "strategy": {
+            "long_signal_execution": "inverse_short",
+            "inverse_short_immediate_entry": False,
+            "long_min_score": 64,
+            "inverse_long_min_score": 64,
+            "short_min_score": 88,
+            "short_enabled": True,
+            "long_enabled": True,
+        },
+    }
+
+    waiting = classify_direction(item, cfg)
+    assert waiting.direction == "NO_TRADE"
+    assert waiting.label == "NO_TRADE_CONFLICT"
+    assert any("waiting for 1m pullback" in warning for warning in waiting.warnings)
+
+    item.metrics.price_change_1m = -0.18
+    confirmed = classify_direction(item, cfg)
+    assert confirmed.direction == "SHORT"
+    assert confirmed.label == "SHORT_INVERSE_LONG_SIGNAL"
+    assert any("1m pullback confirmation" in reason for reason in confirmed.reasons)
+
+
 def test_classifier_allows_high_conviction_continuation_without_volume_spike():
     item = diagnostic(
         price_change_1m=0.2,
@@ -191,6 +259,34 @@ def test_trade_plan_uses_ladder_trigger_for_risk_when_confirmation_required():
     assert plan is not None
     assert plan.entry_price > item.ticker.ask_price
     assert plan.risk.entry_price == plan.entry_price
+
+
+def test_inverse_short_trade_plan_uses_current_bid_and_short_risk_shape():
+    item = diagnostic()
+    item.candles["1"] = [
+        Candle(timestamp_ms=1, exchange="binance", symbol="AAAUSDT", interval="1", open=100, high=102, low=98, close=101, volume=1000, turnover=100_000)
+    ]
+    decision = DirectionDecision("SHORT_INVERSE_LONG_SIGNAL", "SHORT", ["inverse"], [], execution_score=82)
+    plan = build_trade_plan(
+        item,
+        decision,
+        symbol_info=None,
+        balance_usdt=20,
+        config={
+            "strategy": {"inverse_short_immediate_entry": True},
+            "entry": {"mode": "confirmation_ladder", "require_trigger_confirmation": True, "leg_weights": [1.0], "max_legs": 1},
+            "paper": {"max_position_margin_usdt": 2, "max_account_fraction_as_margin": 0.2, "default_leverage": 5, "max_leverage": 10, "max_loss_per_trade_usdt": 0.2},
+            "exit": {},
+        },
+    )
+
+    assert plan is not None
+    assert plan.direction == "SHORT"
+    assert plan.classifier_label == "SHORT_INVERSE_LONG_SIGNAL"
+    assert plan.entry_price == item.ticker.bid_price
+    assert plan.initial_sl_price > plan.entry_price
+    assert plan.tp1_price < plan.entry_price
+    assert plan.be_plus_price < plan.entry_price
 
 
 def base_position():

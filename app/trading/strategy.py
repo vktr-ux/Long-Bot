@@ -9,7 +9,7 @@ from app.trading.classifier import DirectionDecision
 from app.trading.risk import RiskPlan, build_risk_plan
 from app.utils.numbers import clamp
 
-STRATEGY_VERSION = "paper_scalper_v6"
+STRATEGY_VERSION = "paper_scalper_v7"
 
 
 @dataclass(slots=True)
@@ -82,6 +82,8 @@ def build_trade_plan(
     ticker = diagnostic.ticker
     entry_price = ticker.ask_price if direction == "LONG" and ticker.ask_price else ticker.bid_price if direction == "SHORT" and ticker.bid_price else ticker.last_price
     ladder_trigger = last_closed_breakout_price(diagnostic, direction)
+    if decision.label == "SHORT_INVERSE_LONG_SIGNAL":
+        ladder_trigger = entry_price
     trigger_required = bool(entry_cfg.get("require_trigger_confirmation", True)) and entry_cfg.get("mode", "confirmation_ladder") == "confirmation_ladder"
     if trigger_required:
         price_for_risk = max(entry_price, ladder_trigger) if direction == "LONG" else min(entry_price, ladder_trigger)
@@ -99,6 +101,11 @@ def build_trade_plan(
     )
     reasons = list(decision.reasons)
     warnings = list(decision.warnings)
+    if decision.label == "SHORT_INVERSE_LONG_SIGNAL":
+        if bool(config.get("strategy", {}).get("inverse_short_immediate_entry", False)):
+            warnings.append("inverse short uses current bid as trigger without pullback confirmation")
+        else:
+            warnings.append("inverse short uses current bid as trigger after 1m pullback confirmation")
     if not risk.allowed:
         warnings.append(risk.reason or "risk plan rejected")
     notional = risk.notional_usdt

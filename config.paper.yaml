@@ -116,14 +116,17 @@ paper:
 
 strategy:
   direction_mode: both
+  long_signal_execution: normal
   long_enabled: true
   short_enabled: true
   long_min_score: 64
+  inverse_long_min_score: 64
   short_min_score: 88
   long_high_conviction_score: 82
   short_strict_mode: true
   avoid_late_chase: true
   avoid_shorting_strong_momentum: true
+  inverse_short_immediate_entry: false
 
 entry:
   mode: confirmation_ladder

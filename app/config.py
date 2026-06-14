@@ -209,13 +209,16 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
     "strategy": {
         "direction_mode": "both",
+        "long_signal_execution": "normal",
         "long_enabled": True,
         "short_enabled": True,
         "long_min_score": 64,
+        "inverse_long_min_score": 64,
         "short_min_score": 88,
         "short_strict_mode": True,
         "avoid_late_chase": True,
         "avoid_shorting_strong_momentum": True,
+        "inverse_short_immediate_entry": False,
     },
     "entry": {
         "mode": "confirmation_ladder",

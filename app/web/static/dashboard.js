@@ -170,14 +170,17 @@ const settingsHelp = [
   { group: "Фильтры рынка", path: "filters.exclude_major_symbols", about: "Исключать ли крупные мажоры вроде BTC/ETH из paper-скальпера.", values: "true - исключать; false - разрешить." },
 
   { group: "Стратегия", path: "strategy.direction_mode", about: "Какие направления сделок разрешены классификатору.", values: "both, long_only, short_only, auto." },
+  { group: "Стратегия", path: "strategy.long_signal_execution", about: "Как исполнять найденный LONG_CONTINUATION сигнал.", values: "normal - обычный LONG; inverse_short - открыть SHORT от long-сигнала для проверки гипотезы локального отката." },
   { group: "Стратегия", path: "strategy.long_enabled", about: "Глобально разрешает LONG-входы.", values: "true/false." },
   { group: "Стратегия", path: "strategy.short_enabled", about: "Глобально разрешает SHORT-входы.", values: "true/false." },
   { group: "Стратегия", path: "strategy.long_min_score", about: "Минимальный score классификатора для LONG-входа.", values: "0-100. Выше - меньше сделок, строже отбор." },
+  { group: "Стратегия", path: "strategy.inverse_long_min_score", about: "Минимальный score long-сигнала, который можно исполнять как inverse SHORT.", values: "0-100. Для эксперимента обычно равен long_min_score." },
   { group: "Стратегия", path: "strategy.short_min_score", about: "Минимальный score классификатора для SHORT-входа.", values: "0-100. Для шортов сейчас намеренно строже." },
   { group: "Стратегия", path: "strategy.long_high_conviction_score", about: "Порог очень сильного LONG setup, который может пройти без части вторичных подтверждений вроде отдельного volume spike.", values: "0-100. Ниже - больше агрессивных входов." },
   { group: "Стратегия", path: "strategy.short_strict_mode", about: "Включает дополнительные строгие проверки перед SHORT-входом.", values: "true/false." },
   { group: "Стратегия", path: "strategy.avoid_late_chase", about: "Не входить, если движение уже слишком далеко ушло и вход похож на позднюю погоню.", values: "true/false." },
   { group: "Стратегия", path: "strategy.avoid_shorting_strong_momentum", about: "Блокировать шорты против сильного восходящего импульса.", values: "true/false." },
+  { group: "Стратегия", path: "strategy.inverse_short_immediate_entry", about: "Для inverse_short входить сразу от LONG-сигнала без подтверждения 1m отката.", values: "true - агрессивно сразу; false - сначала ждать 1m откат минимум на entry.pullback_confirm_pct, затем входить по текущему bid." },
 
   { group: "Риск", path: "risk.starting_balance_usdt", about: "Стартовый paper-баланс для расчета PnL/ROI.", values: "Больше 0 USDT." },
   { group: "Риск", path: "risk.max_open_positions", about: "Максимум одновременно открытых paper-позиций.", values: "1-50. Сейчас целевой лимит - 5." },

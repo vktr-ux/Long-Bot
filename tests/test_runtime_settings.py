@@ -25,6 +25,9 @@ def test_runtime_settings_defaults_match_paper_exploration_profile(tmp_path):
     assert settings.scanner.max_enriched_candidates_per_cycle == 30
     assert settings.scanner.attention_scheduler_enabled
     assert settings.scanner.attention_rotation_slots == 8
+    assert settings.strategy.long_signal_execution == "normal"
+    assert settings.strategy.inverse_long_min_score == 64
+    assert settings.strategy.inverse_short_immediate_entry is False
     assert settings.risk.stop_loss_symbol_cooldown_minutes == 90
     assert settings.risk.repeat_loss_symbol_count == 2
 
@@ -55,8 +58,12 @@ def test_runtime_settings_db_override_applies_to_config(tmp_path):
     config["app"]["database_path"] = str(tmp_path / "paper.sqlite3")
     settings = build_runtime_settings_from_config(config)
     settings.strategy.short_min_score = 95
+    settings.strategy.long_signal_execution = "inverse_short"
+    settings.strategy.inverse_short_immediate_entry = False
     effective = apply_runtime_settings_to_config(config, settings, version=7, settings_hash=runtime_settings_hash(settings))
     assert effective["strategy"]["short_min_score"] == 95
+    assert effective["strategy"]["long_signal_execution"] == "inverse_short"
+    assert effective["strategy"]["inverse_short_immediate_entry"] is False
     assert effective["runtime_settings"]["version"] == 7
     assert effective["paper"]["max_daily_trades"] == 0
     assert effective["performance"]["attention_scheduler_enabled"]

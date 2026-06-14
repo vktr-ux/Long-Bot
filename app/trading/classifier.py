@@ -6,6 +6,7 @@ from app.storage.models import CandidateDiagnostics
 
 TRADE_LABELS = {
     "LONG_CONTINUATION",
+    "SHORT_INVERSE_LONG_SIGNAL",
     "SHORT_FAILED_BREAKOUT",
     "SHORT_BLOWOFF_REVERSAL",
     "NO_TRADE_LATE_CHASE",
@@ -228,10 +229,17 @@ def classify_direction(diagnostic: CandidateDiagnostics, config: dict) -> Direct
     reasons: list[str] = []
     warnings: list[str] = []
     strategy_cfg = config.get("strategy", {})
+    entry_cfg = config.get("entry", {})
     direction_mode = strategy_cfg.get("direction_mode", "both")
+    long_signal_execution = str(strategy_cfg.get("long_signal_execution", "normal")).lower()
+    inverse_long_signal = long_signal_execution in {"inverse_short", "short_on_long_signal", "contrarian_short"}
+    inverse_short_immediate_entry = bool(strategy_cfg.get("inverse_short_immediate_entry", False))
+    inverse_short_pullback_pct = float(entry_cfg.get("pullback_confirm_pct", 0.15))
     long_enabled = bool(strategy_cfg.get("long_enabled", True)) and direction_mode in {"both", "long_only", "auto"}
     short_enabled = bool(strategy_cfg.get("short_enabled", True)) and direction_mode in {"both", "short_only", "auto"}
+    long_signal_allowed = long_enabled or (inverse_long_signal and short_enabled)
     long_min_score = int(strategy_cfg.get("long_min_score", 68))
+    inverse_long_min_score = int(strategy_cfg.get("inverse_long_min_score", long_min_score))
     short_min_score = int(strategy_cfg.get("short_min_score", 88))
     long_high_conviction_score = int(strategy_cfg.get("long_high_conviction_score", 82))
     short_strict = bool(strategy_cfg.get("short_strict_mode", True))
@@ -270,8 +278,8 @@ def classify_direction(diagnostic: CandidateDiagnostics, config: dict) -> Direct
         and long_blockers["not_hard_chase"]
         and long_blockers["not_immediate_dump"]
     )
-    long_conditions = [
-        long_enabled,
+    long_signal_conditions = [
+        long_signal_allowed,
         long_execution_score >= long_min_score,
         long_blockers["positive_momentum"],
         long_blockers["volume_confirmed"] or high_conviction_long,
@@ -282,13 +290,37 @@ def classify_direction(diagnostic: CandidateDiagnostics, config: dict) -> Direct
         long_blockers["not_hard_chase"],
         long_blockers["not_immediate_dump"],
     ]
+    long_conditions = [long_enabled, *long_signal_conditions[1:]]
     strong_long_continuation = (
         long_blockers["positive_momentum"]
         and (long_blockers["volume_confirmed"] or high_conviction_long)
         and long_blockers["buy_flow_ok"]
         and long_blockers["not_failed_breakout"]
     )
-    if all(long_conditions):
+    inverse_short_pullback_confirmed = (metrics.price_change_1m or 0) <= -inverse_short_pullback_pct
+    if inverse_long_signal and short_enabled and all(long_signal_conditions) and long_execution_score >= inverse_long_min_score:
+        if not inverse_short_immediate_entry and not inverse_short_pullback_confirmed:
+            warnings.append(
+                f"inverse short waiting for 1m pullback >= {inverse_short_pullback_pct:.2f}% "
+                f"(now {(metrics.price_change_1m or 0):+.2f}%)"
+            )
+            warnings.extend(long_warnings)
+            return DirectionDecision("NO_TRADE_CONFLICT", "NO_TRADE", long_reasons[:6], warnings, execution_score=long_execution_score)
+        reasons.extend(
+            [
+                f"inverse mode: LONG_CONTINUATION execution_score {long_execution_score} >= inverse_long_min_score {inverse_long_min_score}",
+                *long_reasons,
+            ]
+        )
+        warnings.extend(long_warnings)
+        if inverse_short_immediate_entry:
+            warnings.append("paper experiment: executing long-continuation signal as contrarian SHORT without pullback confirmation")
+        else:
+            reasons.append(f"1m pullback confirmation {(metrics.price_change_1m or 0):+.2f}% <= -{inverse_short_pullback_pct:.2f}%")
+            warnings.append("paper experiment: executing long-continuation signal as contrarian SHORT after 1m pullback")
+        return DirectionDecision("SHORT_INVERSE_LONG_SIGNAL", "SHORT", reasons, warnings, execution_score=long_execution_score)
+
+    if not inverse_long_signal and all(long_conditions):
         reasons.extend([f"execution_score {long_execution_score} >= long_min_score {long_min_score}", *long_reasons])
         warnings.extend(long_warnings)
         if high_conviction_long and not long_blockers["volume_confirmed"]:
