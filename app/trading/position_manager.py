@@ -115,7 +115,12 @@ def evaluate_position(position: dict, price: float, timestamp_ms: int, config: d
                     updates["current_sl_price"] = max(current_stop, guarded_stop)
                 else:
                     updates["current_sl_price"] = min(current_stop, guarded_stop)
-            if age_seconds >= guard_min_age and net_profit_floor_pct <= move_pct <= guard_floor_pct:
+            pct_tolerance = 0.000001
+            if (
+                age_seconds >= guard_min_age
+                and move_pct + pct_tolerance >= net_profit_floor_pct
+                and move_pct <= guarded_stop_floor_pct + pct_tolerance
+            ):
                 updates["details_json"] = json.dumps(details)
                 return PositionAction("CLOSE", "PROFIT_GIVEBACK_EXIT", 1.0, updates)
 

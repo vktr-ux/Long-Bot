@@ -96,7 +96,7 @@ class RiskSettings(BaseModel):
     max_leverage: float = Field(default=12, ge=1, le=125)
     default_leverage: float = Field(default=8, ge=1, le=125)
     max_loss_per_trade_usdt: float = Field(default=0.35, gt=0)
-    stop_loss_extra_buffer_pct: float = Field(default=0.35, ge=0, le=10)
+    stop_loss_extra_buffer_pct: float = Field(default=0.50, ge=0, le=10)
     max_trades_per_hour: int = Field(default=0, ge=0)
     max_daily_trades: int = Field(default=0, ge=0)
     max_loss_streak: int = Field(default=10, ge=0)
@@ -302,7 +302,7 @@ def build_runtime_settings_from_config(config: dict[str, Any]) -> RuntimeTrading
             max_leverage=paper.get("max_leverage", 10),
             default_leverage=paper.get("default_leverage", 5),
             max_loss_per_trade_usdt=paper.get("max_loss_per_trade_usdt", 0.20),
-            stop_loss_extra_buffer_pct=paper.get("stop_loss_extra_buffer_pct", 0.35),
+            stop_loss_extra_buffer_pct=paper.get("stop_loss_extra_buffer_pct", 0.50),
             max_trades_per_hour=limits.get("max_trades_per_hour", paper.get("max_trades_per_hour", 0)),
             max_daily_trades=limits.get("max_daily_trades", paper.get("max_daily_trades", 0)),
             max_loss_streak=limits.get("max_loss_streak", paper.get("max_loss_streak", 10)),

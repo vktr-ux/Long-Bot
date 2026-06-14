@@ -58,7 +58,7 @@ def roundtrip_cost_fraction(paper_cfg: dict) -> float:
 
 
 def stop_loss_extra_buffer_fraction(paper_cfg: dict) -> float:
-    return max(0.0, float(paper_cfg.get("stop_loss_extra_buffer_pct", 0.35))) / 100
+    return max(0.0, float(paper_cfg.get("stop_loss_extra_buffer_pct", 0.50))) / 100
 
 
 def choose_leverage(spread_pct: float | None, score: int, initial_sl_pct_value: float, paper_cfg: dict) -> float:
