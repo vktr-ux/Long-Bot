@@ -28,13 +28,13 @@ def activity_score(turnover_rank: int | None, volume_spike_15m: float | None, tu
     if turnover_rank is not None:
         if turnover_rank <= 5:
             score += 10
-            reasons.append(f"top Bybit turnover rank #{turnover_rank}")
+            reasons.append(f"top turnover rank #{turnover_rank}")
         elif turnover_rank <= 10:
             score += 8
-            reasons.append(f"high Bybit turnover rank #{turnover_rank}")
+            reasons.append(f"high turnover rank #{turnover_rank}")
         elif turnover_rank <= 25:
             score += 5
-            reasons.append(f"active Bybit turnover rank #{turnover_rank}")
+            reasons.append(f"active turnover rank #{turnover_rank}")
     if volume_spike_15m is not None:
         if volume_spike_15m >= 3:
             score += 5
@@ -50,4 +50,3 @@ def activity_score(turnover_rank: int | None, volume_spike_15m: float | None, tu
             score += 3
             reasons.append(f"15m turnover above baseline x{turnover_spike_15m:.1f}")
     return min(score, 20), reasons
-

@@ -1,0 +1,121 @@
+from types import SimpleNamespace
+
+from app.storage.models import TickerSnapshot
+from app.trading.runner import account_can_open, cooldown_reason, entry_trigger_status
+from app.utils.time import now_ms
+
+
+class FakeStore:
+    def __init__(self, open_positions, trades):
+        self._open_positions = open_positions
+        self._trades = trades
+
+    def get_open_positions(self, account_id):
+        return self._open_positions
+
+    def list_trades(self, from_ms=None, to_ms=None, symbol=None, direction=None, exit_reason=None, limit=1000):
+        rows = self._trades
+        if from_ms is not None:
+            rows = [row for row in rows if int(row.get("exit_time_ms", now_ms())) >= from_ms]
+        if symbol:
+            rows = [row for row in rows if row.get("symbol") == symbol.upper()]
+        if direction:
+            rows = [row for row in rows if row.get("direction") == direction.upper()]
+        return rows[:limit]
+
+
+def _trade(net=0.01, symbol="AAAUSDT", direction="LONG", age_ms=0):
+    return {"net_pnl_usdt": net, "symbol": symbol, "direction": direction, "exit_time_ms": now_ms() - age_ms, "exit_reason": "STOP_LOSS" if net < 0 else "BREAKEVEN_PLUS_STOP"}
+
+
+def test_daily_trade_limit_counts_open_positions_opened_today():
+    store = FakeStore(
+        open_positions=[{"symbol": "AAAUSDT", "opened_at_ms": now_ms()}],
+        trades=[_trade() for _ in range(14)],
+    )
+    can_open, reason = account_can_open(
+        store,
+        account_id=1,
+        config={"paper": {"max_open_positions": 5, "max_daily_trades": 15, "max_daily_loss_usdt": 100, "max_loss_streak": 15}},
+    )
+    assert not can_open
+    assert reason == "max daily trades reached"
+
+
+def test_zero_trade_limits_and_zero_loss_streak_are_unlimited():
+    store = FakeStore(
+        open_positions=[],
+        trades=[_trade(-0.01) for _ in range(25)],
+    )
+    can_open, reason = account_can_open(
+        store,
+        account_id=1,
+        config={"paper": {"max_open_positions": 5, "max_daily_trades": 0, "max_trades_per_hour": 0, "max_daily_loss_usdt": 100, "max_loss_streak": 0}},
+    )
+    assert can_open
+    assert reason is None
+
+
+def test_symbol_and_direction_cooldowns_block_reentry():
+    store = FakeStore(open_positions=[], trades=[_trade(-0.05, symbol="AAAUSDT", direction="LONG", age_ms=5 * 60 * 1000)])
+    assert cooldown_reason(store, "AAAUSDT", "LONG", {"paper": {"symbol_cooldown_minutes": 20, "direction_cooldown_minutes": 0}}).startswith("symbol cooldown")
+    assert cooldown_reason(store, "BBBUSDT", "LONG", {"paper": {"symbol_cooldown_minutes": 0, "direction_cooldown_minutes": 10}}).startswith("LONG cooldown")
+    assert cooldown_reason(store, "AAAUSDT", "LONG", {"paper": {"symbol_cooldown_minutes": 1, "direction_cooldown_minutes": 1}}) is None
+
+
+def test_stop_loss_symbol_cooldown_blocks_losing_symbol_longer_than_generic_pause():
+    store = FakeStore(open_positions=[], trades=[_trade(-0.05, symbol="AAAUSDT", direction="LONG", age_ms=45 * 60 * 1000)])
+
+    reason = cooldown_reason(
+        store,
+        "AAAUSDT",
+        "LONG",
+        {"paper": {"symbol_cooldown_minutes": 20, "direction_cooldown_minutes": 0, "stop_loss_symbol_cooldown_minutes": 90}},
+    )
+
+    assert reason.startswith("symbol loss cooldown")
+
+
+def test_repeat_loss_symbol_cooldown_blocks_clustered_symbol_losses():
+    store = FakeStore(
+        open_positions=[],
+        trades=[
+            _trade(-0.05, symbol="AAAUSDT", direction="LONG", age_ms=45 * 60 * 1000),
+            _trade(-0.03, symbol="AAAUSDT", direction="LONG", age_ms=180 * 60 * 1000),
+        ],
+    )
+
+    reason = cooldown_reason(
+        store,
+        "AAAUSDT",
+        "LONG",
+        {
+            "paper": {
+                "symbol_cooldown_minutes": 20,
+                "direction_cooldown_minutes": 0,
+                "stop_loss_symbol_cooldown_minutes": 0,
+                "repeat_loss_symbol_count": 2,
+                "repeat_loss_window_minutes": 360,
+                "repeat_loss_symbol_cooldown_minutes": 240,
+            }
+        },
+    )
+
+    assert reason.startswith("symbol repeat-loss cooldown")
+
+
+def test_entry_trigger_confirmation_blocks_early_and_late_chase_entries():
+    cfg = {"entry": {"mode": "confirmation_ladder", "require_trigger_confirmation": True, "trigger_tolerance_pct": 0.02, "max_entry_distance_above_trigger_pct": 0.45}}
+    plan = SimpleNamespace(direction="LONG", entry_grid=[{"trigger_price": 101.0}])
+
+    ready, reason = entry_trigger_status(plan, TickerSnapshot(now_ms(), "binance", "AAAUSDT", 100.5, ask_price=100.5), cfg)
+    assert not ready
+    assert "waiting entry trigger" in reason
+
+    ready, reason = entry_trigger_status(plan, TickerSnapshot(now_ms(), "binance", "AAAUSDT", 101.1, ask_price=101.1), cfg)
+    assert ready
+    assert reason is None
+
+    ready, reason = entry_trigger_status(plan, TickerSnapshot(now_ms(), "binance", "AAAUSDT", 101.7, ask_price=101.7), cfg)
+    assert not ready
+    assert "overrun" in reason

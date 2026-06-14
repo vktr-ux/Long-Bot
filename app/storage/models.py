@@ -13,6 +13,17 @@ class SymbolInfo:
     status: str
     contract_type: str | None = None
     launch_time_ms: int | None = None
+    tick_size: float | None = None
+    step_size: float | None = None
+    min_qty: float | None = None
+    max_qty: float | None = None
+    market_step_size: float | None = None
+    market_min_qty: float | None = None
+    market_max_qty: float | None = None
+    min_notional: float | None = None
+    price_precision: int | None = None
+    quantity_precision: int | None = None
+    trigger_protect: float | None = None
 
 
 @dataclass(slots=True)
@@ -33,6 +44,15 @@ class TickerSnapshot:
     bid_price: float | None = None
     ask_price: float | None = None
     spread_pct: float | None = None
+    mark_price: float | None = None
+    index_price: float | None = None
+    trade_count_24h: int | None = None
+    price_change_1m_pct: float | None = None
+    price_change_3m_pct: float | None = None
+    price_change_5m_pct: float | None = None
+    price_change_15m_pct: float | None = None
+    quote_volume_delta_5m: float | None = None
+    trade_count_delta_5m: int | None = None
     prev_price_24h: float | None = None
     raw: dict[str, Any] = field(default_factory=dict)
 
@@ -58,6 +78,7 @@ class Metrics:
     symbol: str
     timestamp_ms: int
     price_change_1m: float | None = None
+    price_change_3m: float | None = None
     price_change_5m: float | None = None
     price_change_15m: float | None = None
     price_change_1h: float | None = None
@@ -75,6 +96,8 @@ class Metrics:
     turnover_rank_24h: int | None = None
     volume_rank_24h: int | None = None
     spread_pct: float | None = None
+    taker_buy_sell_ratio: float | None = None
+    depth_usdt_20bps: float | None = None
     btc_change_15m: float | None = None
     btc_change_1h: float | None = None
     btc_change_4h: float | None = None
@@ -223,3 +246,5 @@ class ScanResult:
     signals: list[SignalCandidate]
     rejected: dict[str, list[str]]
     stage_counts: dict[str, int]
+    attention_state: dict[str, Any] = field(default_factory=dict)
+    attention_stats: dict[str, Any] = field(default_factory=dict)

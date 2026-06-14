@@ -246,7 +246,7 @@ def format_signal(signal: SignalCandidate, previous_state: dict[str, Any] | None
     current_price = _signal_price(signal)
     lines: list[str] = [
         f"{level_emoji} <b>Long-Bot · {html.escape(signal.level)} ({html.escape(level_label)})</b>",
-        f"<code>{html.escape(signal.symbol)}</code> · Bybit Futures · <b>{signal.score}/100</b> · грейд {html.escape(signal.grade)}",
+        f"<code>{html.escape(signal.symbol)}</code> · {html.escape(signal.exchange.title())} Futures · <b>{signal.score}/100</b> · грейд {html.escape(signal.grade)}",
         "",
         f"💵 <b>Цена</b>: <code>{_fmt_price(current_price)}</code>",
         f"5м: {fmt_pct(metrics.price_change_5m)}",

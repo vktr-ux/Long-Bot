@@ -6,6 +6,7 @@ import logging
 
 from app.config import load_config
 from app.exchanges.bybit import BybitPublicConnector, recompute_price_24h_pct
+from app.exchanges.factory import build_connector, selected_exchange_name
 from app.notifications.telegram import TelegramNotifier, format_signal
 from app.scanner.calibration import (
     ReplayCaseResult,
@@ -87,12 +88,7 @@ async def run_cycle(
     top: int = 30,
     explain_symbol: str | None = None,
 ) -> tuple[bool, str | None]:
-    bybit_cfg = config["exchanges"]["bybit"]
-    connector = BybitPublicConnector(
-        base_url=bybit_cfg["base_url"],
-        category=bybit_cfg["category"],
-        max_concurrent_requests=config["performance"]["max_concurrent_requests"],
-    )
+    connector = build_connector(config)
     try:
         engine = ScanEngine(connector, config)
         result = await engine.scan_once(explain_symbol=explain_symbol)
@@ -120,7 +116,7 @@ async def run_cycle(
                 print_explain(explained)
                 print("=" * 72)
             else:
-                print(f"Explain symbol not found in Bybit linear universe: {explain_symbol}")
+                print(f"Explain symbol not found in {connector.name} futures universe: {explain_symbol}")
         print(f"\nGenerated signals: {len(result.signals)}")
         notifier = TelegramNotifier(
             config["telegram"].get("bot_token", ""),
@@ -186,20 +182,15 @@ async def run_telegram_test(config: dict) -> int:
 
 
 async def run_sanity_check(config: dict, symbols_arg: str) -> int:
-    bybit_cfg = config["exchanges"]["bybit"]
-    connector = BybitPublicConnector(
-        base_url=bybit_cfg["base_url"],
-        category=bybit_cfg["category"],
-        max_concurrent_requests=config["performance"]["max_concurrent_requests"],
-    )
+    connector = build_connector(config)
     failures = 0
     try:
         symbols = await connector.get_symbols()
-        print(f"Instruments pagination total linear symbols: {len(symbols)}")
+        print(f"{connector.name} instruments total futures symbols: {len(symbols)}")
         if len(symbols) > 500:
-            print("PASS instruments pagination: total linear symbols > 500")
+            print("PASS instruments total futures symbols > 500")
         else:
-            print("WARN instruments pagination: total linear symbols <= 500 in this response")
+            print("WARN instruments total futures symbols <= 500 in this response")
         tickers = await connector.get_tickers()
         ticker_map = {ticker.symbol.upper(): ticker for ticker in tickers}
         for symbol in [item.strip().upper() for item in symbols_arg.split(",") if item.strip()]:
@@ -209,7 +200,7 @@ async def run_sanity_check(config: dict, symbols_arg: str) -> int:
                 print("  WARN ticker not found")
                 continue
             raw_pct = ticker.raw.get("price24hPcnt") if ticker.raw else None
-            recomputed = recompute_price_24h_pct(ticker.last_price, ticker.prev_price_24h)
+            recomputed = recompute_price_24h_pct(ticker.last_price, ticker.prev_price_24h) if ticker.prev_price_24h else None
             print(f"  price24hPcnt normalized: {ticker.price_24h_pct} recomputed: {recomputed}")
             if recomputed is not None and ticker.price_24h_pct is not None and abs(recomputed - ticker.price_24h_pct) <= 0.05:
                 print("  PASS price24hPcnt normalization")
@@ -217,22 +208,14 @@ async def run_sanity_check(config: dict, symbols_arg: str) -> int:
                 print("  FAIL price24hPcnt normalization mismatch")
                 failures += 1
             else:
-                print("  WARN price24hPcnt recompute unavailable")
+                print("  INFO price24hPcnt recompute unavailable for this connector")
             print(f"  turnover24h USD liquidity field: {ticker.turnover_24h}")
             print(f"  volume24h base-coin field: {ticker.volume_24h}")
             if ticker.turnover_24h is not None:
                 print("  PASS liquidity filters use turnover_24h, not base volume")
-            raw_payload = await connector._get(
-                "/v5/market/kline",
-                {"category": connector.category, "symbol": symbol, "interval": "15", "limit": 5},
-            )
-            raw_rows = raw_payload.get("result", {}).get("list", [])
-            raw_timestamps = [int(row[0]) for row in raw_rows]
-            raw_reverse = raw_timestamps == sorted(raw_timestamps, reverse=True)
             candles = await connector.get_klines(symbol, "15", 5)
             parsed_timestamps = [c.timestamp_ms for c in candles]
             parsed_asc = parsed_timestamps == sorted(parsed_timestamps)
-            print(f"  raw Bybit kline order descending: {raw_reverse}")
             print(f"  parsed kline order ASC: {parsed_asc}")
             if parsed_asc:
                 print("  PASS reverse order handled after parsing")
@@ -374,7 +357,7 @@ async def async_main() -> int:
             )
             if args.once:
                 if not ok:
-                    print(f"Live Bybit dry-run failed: {error}")
+                    print(f"Live {selected_exchange_name(config)} dry-run failed: {error}")
                     return 2
                 return 0
             await asyncio.sleep(config["app"]["scan_interval_seconds"])

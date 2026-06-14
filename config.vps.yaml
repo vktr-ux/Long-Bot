@@ -1,4 +1,5 @@
 app:
+  exchange: binance
   scan_interval_seconds: 120
   dry_run: false
   log_level: INFO
@@ -7,11 +8,11 @@ app:
 
 exchanges:
   bybit:
-    enabled: true
+    enabled: false
     base_url: "https://api.bybit.com"
     category: "linear"
   binance:
-    enabled: false
+    enabled: true
     base_url: "https://fapi.binance.com"
 
 performance:

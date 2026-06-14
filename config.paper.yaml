@@ -1,0 +1,178 @@
+app:
+  exchange: binance
+  scan_interval_seconds: 15
+  dry_run: true
+  log_level: INFO
+  database_path: data/paper.sqlite3
+  profile: aggressive
+
+exchanges:
+  bybit:
+    enabled: false
+    base_url: "https://api.bybit.com"
+    category: "linear"
+  binance:
+    enabled: true
+    base_url: "https://fapi.binance.com"
+
+symbols:
+  quote_asset: "USDT"
+  exclude_major_symbols: true
+  major_symbols:
+    - BTCUSDT
+    - ETHUSDT
+  blacklist: []
+  include_symbols: []
+
+filters:
+  min_turnover_24h_usd: 10000000
+  min_quote_volume_24h_usd: 10000000
+  real_money_min_quote_volume_24h_usd: 30000000
+  min_volume_24h_usd: 5000000
+  max_spread_pct: 0.20
+  max_spread_pct_absolute_skip: 0.35
+  min_5m_change_abs_pct: 0.8
+  min_price_change_15m_pct_for_candidate: 0.8
+  min_price_change_1h_pct_for_candidate: 1.8
+  min_15m_volume_spike: 1.8
+  min_volume_spike_for_candidate: 1.4
+  top_activity_rank_candidate: 250
+  exclude_major_symbols: true
+
+performance:
+  max_enriched_candidates_per_cycle: 30
+  max_concurrent_requests: 3
+  binance_request_weight_limit_per_minute: 900
+  binance_min_request_interval_seconds: 0.08
+  symbol_universe_refresh_minutes: 20
+  resistance_cache_ttl_minutes: 15
+  orderbook_check_only_for_score_above: 55
+  attention_scheduler_enabled: true
+  attention_waiting_slots: 6
+  attention_hot_slots: 8
+  attention_recent_slots: 5
+  attention_reversal_slots: 3
+  attention_rotation_slots: 8
+  attention_recent_score_floor: 50
+  attention_recent_plan_lookback_minutes: 120
+  attention_recent_plan_limit: 2000
+  attention_waiting_lookback_minutes: 90
+  attention_hot_score_threshold: 64
+  attention_hot_score_cooldown_minutes: 2
+  attention_near_score_cooldown_minutes: 10
+  attention_mid_score_cooldown_minutes: 25
+  attention_low_score_cooldown_minutes: 60
+  attention_force_hot_activity_score: 80
+  attention_force_hot_cooldown_seconds: 45
+  attention_reversal_downside_score_floor: 18
+  attention_state_ttl_minutes: 360
+  attention_state_max_symbols: 600
+
+market_data:
+  use_websocket: true
+  binance_market_stream_url: "wss://fstream.binance.com/market/stream?streams=!ticker@arr/!markPrice@arr"
+  binance_public_stream_url: "wss://fstream.binance.com/public/ws/!bookTicker"
+  websocket_reconnect_delay_seconds: 5
+  websocket_fallback_to_rest_after_seconds: 45
+
+storage:
+  save_all_market_snapshots: true
+  all_market_snapshot_interval_seconds: 15
+
+paper:
+  account_name: main
+  starting_balance_usdt: 20.0
+  scan_interval_seconds: 15
+  monitor_interval_seconds: 2
+  max_open_positions: 5
+  max_new_positions_per_cycle: 2
+  max_position_margin_usdt: 3.0
+  max_account_fraction_as_margin: 0.18
+  max_leverage: 12
+  default_leverage: 8
+  max_loss_per_trade_usdt: 0.35
+  max_trades_per_hour: 0
+  max_daily_loss_usdt: 1.00
+  max_daily_trades: 0
+  max_loss_streak: 10
+  enforce_daily_loss_limit: false
+  symbol_cooldown_minutes: 20
+  direction_cooldown_minutes: 5
+  stop_loss_symbol_cooldown_minutes: 90
+  repeat_loss_symbol_cooldown_minutes: 240
+  repeat_loss_symbol_count: 2
+  repeat_loss_window_minutes: 360
+  fee_rate_taker: 0.0004
+  fee_rate_maker: 0.0002
+  entry_slippage_bps: 3
+  exit_slippage_bps: 5
+  min_net_profit_after_breakeven_usdt: 0.02
+  preferred_net_profit_usdt: 0.05
+  time_stop_seconds: 240
+  max_hold_seconds: 900
+  fallback_min_notional_usdt: 5.0
+  fallback_step_size: 0.001
+  persist_rejected_plans_per_cycle: 20
+
+strategy:
+  direction_mode: both
+  long_enabled: true
+  short_enabled: true
+  long_min_score: 64
+  short_min_score: 88
+  long_high_conviction_score: 82
+  short_strict_mode: true
+  avoid_late_chase: true
+  avoid_shorting_strong_momentum: true
+
+entry:
+  mode: confirmation_ladder
+  legs_enabled: true
+  leg_weights: [0.70, 0.30]
+  max_legs: 2
+  allow_average_down: false
+  market_entry_allowed: true
+  use_limit_ioc_for_paper_model: true
+  require_trigger_confirmation: true
+  trigger_tolerance_pct: 0.02
+  max_entry_distance_above_trigger_pct: 0.45
+  breakout_buffer_pct_min: 0.05
+  breakout_buffer_pct_max: 0.12
+  pullback_confirm_pct: 0.15
+  chase_max_distance_pct: 0.60
+
+exit:
+  initial_sl_pct_min: 0.45
+  initial_sl_pct_max: 0.95
+  initial_sl_spread_multiplier: 1.5
+  initial_sl_atr_multiplier: 0.35
+  breakeven_plus_enabled: true
+  breakeven_plus_trigger_extra_pct: 0.25
+  min_net_profit_after_breakeven_usdt: 0.02
+  preferred_net_profit_after_breakeven_usdt: 0.05
+  tp1_enabled: true
+  tp1_trigger_pct_min: 0.80
+  tp1_trigger_pct_max: 1.80
+  tp1_close_fraction: 0.50
+  trailing_enabled: true
+  trailing_start_pct_min: 1.20
+  trailing_distance_pct_min: 0.45
+  trailing_distance_pct_max: 0.95
+  trailing_spread_multiplier: 2.0
+  trailing_atr_multiplier: 0.40
+  time_stop_seconds: 240
+  max_hold_seconds: 900
+
+positions:
+  allow_duplicate_symbol: false
+  allow_opposite_positions_same_symbol: false
+  max_open_positions: 5
+
+web:
+  dashboard_token_env: DASHBOARD_TOKEN
+  route_prefix: /bot
+
+profiles:
+  aggressive:
+    filters:
+      top_activity_rank_candidate: 250

@@ -3,4 +3,6 @@ python-dotenv
 PyYAML
 pytest
 pytest-asyncio
-
+fastapi
+uvicorn
+websockets

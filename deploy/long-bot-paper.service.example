@@ -1,0 +1,18 @@
+[Unit]
+Description=Long-Bot Binance paper scalper
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=deploy
+WorkingDirectory=/opt/Long-Bot
+EnvironmentFile=/opt/Long-Bot/.env
+ExecStart=/opt/Long-Bot/.venv/bin/python -m app.trading.runner --config config.paper.yaml
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

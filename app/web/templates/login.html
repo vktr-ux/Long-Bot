@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Long-Bot Login</title>
+  <link rel="stylesheet" href="static/dashboard.css">
+</head>
+<body class="login">
+  <main class="login-panel">
+    <h1>Long-Bot</h1>
+    <form id="login-form">
+      <label for="token">Dashboard token</label>
+      <input id="token" name="token" type="password" autocomplete="current-password" autofocus>
+      <button type="submit">Open dashboard</button>
+    </form>
+  </main>
+  <script>
+    document.getElementById("login-form").addEventListener("submit", (event) => {
+      event.preventDefault();
+      const token = document.getElementById("token").value.trim();
+      if (token) {
+        localStorage.setItem("dashboardToken", token);
+        window.location.href = "?token=" + encodeURIComponent(token);
+      }
+    });
+  </script>
+</body>
+</html>

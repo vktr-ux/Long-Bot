@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Long-Bot Paper</title>
+  <link rel="stylesheet" href="static/dashboard.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <h1>Long-Bot Paper</h1>
+      <p id="subtitle">Binance USD-M futures public-data scalper</p>
+    </div>
+    <div class="status" id="status">loading</div>
+  </header>
+
+  <main>
+    <section class="metrics-grid" id="metrics"></section>
+
+    <nav class="tabs" aria-label="Dashboard tabs">
+      <button class="tab active" data-tab="overview">Overview</button>
+      <button class="tab" data-tab="open">Open</button>
+      <button class="tab" data-tab="history">History</button>
+      <button class="tab" data-tab="signals">Signals</button>
+      <button class="tab" data-tab="impact">Impact</button>
+      <button class="tab" data-tab="settings">Settings</button>
+    </nav>
+
+    <section class="panel active" id="overview">
+      <div class="split">
+        <div>
+          <h2>Equity</h2>
+          <canvas id="equity-chart" height="180"></canvas>
+        </div>
+        <div>
+          <h2>7-day Tracking</h2>
+          <div id="tracking"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel" id="open">
+      <h2>Open Positions</h2>
+      <div class="table-wrap"><table id="open-table"></table></div>
+    </section>
+
+    <section class="panel" id="history">
+      <div class="section-head">
+        <h2>Closed Trades</h2>
+        <button id="csv-export">CSV</button>
+      </div>
+      <div class="filters">
+        <input id="filter-symbol" placeholder="Symbol">
+        <select id="filter-direction">
+          <option value="">Direction</option>
+          <option>LONG</option>
+          <option>SHORT</option>
+        </select>
+        <input id="filter-exit" placeholder="Exit reason">
+      </div>
+      <div class="table-wrap"><table id="history-table"></table></div>
+    </section>
+
+    <section class="panel" id="signals">
+      <h2>Scanner Candidates</h2>
+      <div class="table-wrap"><table id="signals-table"></table></div>
+    </section>
+
+    <section class="panel" id="impact">
+      <h2>Settings Impact</h2>
+      <div class="table-wrap"><table id="impact-table"></table></div>
+    </section>
+
+    <section class="panel" id="settings">
+      <div class="settings-title">
+        <h2>Runtime Settings</h2>
+        <div class="settings-meta" id="settings-meta"></div>
+      </div>
+      <div class="settings-command-bar" aria-label="Runtime settings actions">
+        <div class="settings-command-group">
+          <span class="settings-command-label">JSON</span>
+          <button id="settings-format">Format JSON</button>
+          <button id="settings-validate">Validate</button>
+          <button id="settings-apply" class="primary-action">Save</button>
+        </div>
+        <div class="settings-command-group">
+          <span class="settings-command-label">Bot</span>
+          <button id="bot-pause">Pause</button>
+          <button id="bot-resume">Resume</button>
+        </div>
+        <div class="settings-command-group">
+          <span class="settings-command-label">Other</span>
+          <button id="settings-export">Export YAML</button>
+          <button id="settings-reset" class="danger-action">Reset</button>
+        </div>
+      </div>
+      <textarea id="settings-comment" placeholder="Change comment"></textarea>
+      <div class="settings-editor-wrap">
+        <textarea id="settings-editor" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
+      </div>
+      <div class="inline-status" id="settings-editor-status"></div>
+      <div class="settings-help">
+        <h3>Справочник настроек</h3>
+        <div class="table-wrap"><table id="settings-help-table"></table></div>
+      </div>
+    </section>
+  </main>
+
+  <script src="static/dashboard.js"></script>
+</body>
+</html>

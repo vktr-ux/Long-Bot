@@ -1,23 +1,25 @@
-# Crypto Long Momentum Scanner
+# Long-Bot Binance Paper Scalper
 
-Local-first Bybit public-data scanner for unusual crypto futures activity and 4H breakout context. It is a radar for manual review, not an auto-trading bot.
+Binance-first USD-M Futures public-data scanner with a paper-trading scalper, exact SQLite trade accounting, and a lightweight FastAPI dashboard. Default runtime is `paper`; it uses public market data and simulated fills only.
 
 ## What It Does
 
-- Fetches Bybit USDT linear perpetual public market data.
+- Fetches Binance USD-M Futures public market data by default.
+- Keeps Bybit public connector as a fallback/replay connector.
 - Ranks symbols by 24h turnover/activity.
 - Enriches only top candidates with candles and open-interest history.
-- Calculates price momentum, volume/turnover spikes, OI/funding context, BTC background, RSI warnings, 4H resistance/breakout state, setup quality, and score.
-- Sends or prints alerts that say `open chart / check setup`.
-- Saves symbols, market snapshots, states, signals, and outcome-tracking schema in SQLite.
+- Calculates short-term momentum, volume/turnover spikes, OI/funding context, taker pressure, depth, BTC background, RSI warnings, 4H resistance/breakout state, setup quality, and score.
+- Classifies deterministic LONG/SHORT/no-trade decisions.
+- Simulates paper entries/exits, fees, slippage, breakeven+, trailing/time stops, MFE/MAE, and exact closed trade history from fills.
+- Serves a token-protected dashboard with balance, open positions, history, signals, equity, settings-version impact, and runtime-editable trading rules.
 
 ## What It Does Not Do
 
-- No order placement.
-- No auto-buy, auto-sell, stop-loss, or take-profit orders.
-- No exchange private API keys.
+- No real order placement.
+- No exchange stop-loss or take-profit orders; stops/TP/trailing are simulated in paper state.
+- No exchange private API keys required for default mode.
 - No balance, position, or private stream access.
-- No financial advice or guaranteed trade claims.
+- No financial advice, profitability claim, or guaranteed trade outcome.
 
 ## Setup
 
@@ -33,17 +35,85 @@ Fill `.env` with your Telegram bot token and chat id when you want live Telegram
 ```env
 TELEGRAM_BOT_TOKEN=
 TELEGRAM_CHAT_ID=
+DASHBOARD_TOKEN=
+TRADING_MODE=paper
 ```
 
-Exchange API keys are not needed because the scanner uses public market-data endpoints only.
+Exchange API keys are not needed for paper mode because the scanner uses public market-data endpoints only.
 
 ## Run
 
-Dry-run one scan with live Bybit data and no Telegram sends:
+Dry-run one scan with live Binance public data and no Telegram sends:
 
 ```bash
-python -m app.main --once --dry-run
+python -m app.main --once --dry-run --config config.paper.yaml
 ```
+
+Run one paper scan/manage cycle:
+
+```bash
+python -m app.trading.runner --config config.paper.yaml --once
+```
+
+Run continuously until at least one closed paper trade is recorded:
+
+```bash
+python -m app.trading.runner --config config.paper.yaml --until-first-trade
+```
+
+Start the dashboard locally:
+
+```bash
+python -m app.web.server --config config.paper.yaml --host 127.0.0.1 --port 8008
+```
+
+## Runtime Settings
+
+The dashboard includes a `Settings` tab for paper-mode tuning without redeploy. The active settings are stored in SQLite with a version and hash, and the runner hot-reloads the active version before each scan cycle.
+
+Available API surfaces:
+
+```text
+GET  /api/settings/schema
+GET  /api/settings/trading
+POST /api/settings/validate
+PUT  /api/settings/trading
+POST /api/settings/apply
+POST /api/settings/reset-defaults
+GET  /api/settings/history
+GET  /api/settings/export.yaml
+POST /api/bot/pause
+POST /api/bot/resume
+GET  /api/bot/status
+```
+
+Paper exploration defaults:
+
+```yaml
+trading_mode: paper
+risk_profile: exploration_paper
+paper:
+  max_open_positions: 5
+  max_new_positions_per_cycle: 2
+  max_position_margin_usdt: 3.0
+  max_leverage: 12
+  default_leverage: 8
+  max_trades_per_hour: 0
+  max_daily_trades: 0
+  max_loss_streak: 10
+  enforce_daily_loss_limit: false
+strategy:
+  long_min_score: 64
+entry:
+  require_trigger_confirmation: true
+  max_entry_distance_above_trigger_pct: 0.45
+```
+
+`0` means unlimited for paper trade-count limits and disabled for `max_loss_streak`. Live/testnet settings cannot be made fully unlimited from the UI unless `ALLOW_UNSAFE_LIVE_SETTINGS=true` is set explicitly.
+
+Each new trade plan, paper position, and closed paper trade stores `strategy_config_version` and `settings_hash`, so dashboard analytics can compare PnL by settings version. Open positions keep the settings snapshot saved at entry for exit management.
+
+Current aggressive paper strategy code is `paper_scalper_v6`. It is trigger-gated: a valid LONG setup can be stored as `waiting_entry`, but the paper broker opens only after the calculated ladder trigger is reached. This avoids buying a signal before confirmation while still allowing active fresh-breakout scalping.
 
 Diagnostic one-shot scan:
 
@@ -71,7 +141,7 @@ python -m app.main --telegram-test
 python -m app.main --telegram-test --config config.vps.yaml
 ```
 
-Continuous dry-run:
+Continuous scanner dry-run:
 
 ```bash
 python -m app.main --dry-run
@@ -223,31 +293,53 @@ TELEGRAM_BOT_TOKEN=
 TELEGRAM_CHAT_ID=
 ```
 
-Run Telegram and scanner checks:
+Run tests and paper checks:
 
 ```bash
-python -m app.main --telegram-test --config config.vps.yaml
-python -m app.main --once --dry-run --config config.vps.yaml
+pytest -q
+python -m app.main --once --dry-run --config config.paper.yaml
+python -m app.trading.runner --config config.paper.yaml --once
 ```
 
-Install the systemd service:
+Install the paper runner and dashboard systemd services:
 
 ```bash
-sudo cp deploy/long-bot.service.example /etc/systemd/system/long-bot.service
+sudo cp deploy/long-bot-paper.service.example /etc/systemd/system/long-bot-paper.service
+sudo cp deploy/long-bot-web.service.example /etc/systemd/system/long-bot-web.service
 sudo systemctl daemon-reload
-sudo systemctl enable long-bot
-sudo systemctl start long-bot
-sudo systemctl status long-bot
+sudo systemctl enable --now long-bot-paper long-bot-web
+sudo systemctl status long-bot-paper
+sudo systemctl status long-bot-web
+```
+
+Safe nginx location example for the shared `8443` site:
+
+```nginx
+location /bot/ {
+    proxy_pass http://127.0.0.1:8008/;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
 ```
 
 Operational commands:
 
 ```bash
-sudo systemctl stop long-bot
-sudo systemctl restart long-bot
-sudo systemctl status long-bot
-journalctl -u long-bot -f
+cd /opt/Long-Bot
+git pull
+. .venv/bin/activate
+pip install -r requirements.txt
+pytest -q
+sudo systemctl restart long-bot-paper long-bot-web
+sudo systemctl status long-bot-paper
+sudo systemctl status long-bot-web
+sudo journalctl -u long-bot-paper -f
+sudo journalctl -u long-bot-web -f
 ```
+
+Day-to-day strategy tuning should use the dashboard Settings tab: change values, click `Validate`, then `Apply`. A service restart is only needed for code/dependency changes or systemd/nginx changes.
 
 ## Outcome Tracking
 

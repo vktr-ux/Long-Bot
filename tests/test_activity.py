@@ -12,5 +12,4 @@ def test_turnover_rank_and_activity_score():
     assert {t.symbol: t.turnover_rank_24h for t in ranked}["BBBUSDT"] == 1
     score, reasons = activity_score(1, 3.1, 2.1)
     assert score == 18
-    assert any("top Bybit" in reason for reason in reasons)
-
+    assert any("top turnover" in reason for reason in reasons)
